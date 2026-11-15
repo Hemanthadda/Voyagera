@@ -3651,6 +3651,7 @@
                   </div>
                   <div class="flex items-center gap-2 shrink-0">
                     ${lastSyncDiagnostic.canCreateRepo ? `<button type="button" onclick="createPrivateGitHubRepo()" class="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-[11px] font-extrabold shadow-2xs">Auto-Create Private Repo</button>` : ''}
+                    ${lastSyncDiagnostic.isRevoked ? `<button type="button" onclick="switchToZeroTokenRoom()" class="px-3 py-1.5 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-[11px] font-extrabold shadow-2xs">Use Zero-Token Sync Room</button>` : ''}
                     <button type="button" onclick="lastSyncDiagnostic=null; render();" class="opacity-60 hover:opacity-100 px-1"><i class="fa-solid fa-xmark"></i></button>
                   </div>
                 </div>
@@ -3716,6 +3717,9 @@
                       <span id="gh-token-fingerprint" class="font-mono font-bold ${cfg.ghToken ? 'text-emerald-800' : 'text-amber-700'}">${getTokenDebugFingerprint(cfg.ghToken)}</span>
                       <span class="text-stone-500">Use <strong>Classic Token (<code>ghp_...</code>)</strong> with <strong><code>repo</code></strong> checked</span>
                     </div>
+                    <p class="text-[11px] font-bold text-rose-700 bg-rose-50/90 border border-rose-200 rounded-xl px-3 py-1.5">
+                      <i class="fa-solid fa-triangle-exclamation mr-1"></i>Never upload <code>voyagera-key.json</code> or tokens into your public <code>Voyagera</code> GitHub repo — GitHub automatically revokes any token pushed to public code.
+                    </p>
                   </div>
                 ` : ''}
                 ${cfg.serverMode === 'webdav' ? `
@@ -4624,7 +4628,9 @@
         });
         if (userRes.status === 401) {
           const ghErr = await userRes.json().catch(() => ({}));
-          throw new Error(`GitHub rejected token ${fp}: ${ghErr.message || 'Bad credentials'}. Make sure you copied a newly generated token (revoked/old tokens cannot be reused).`);
+          const errObj = new Error(`GitHub revoked/rejected token ${fp} (${ghErr.message || 'Bad credentials'}). Never upload voyagera-key.json to a public GitHub repo—generate a fresh Classic Token (ghp_...) and keep the key file only in Google Drive/iCloud, or use the Zero-Token Sync Room.`);
+          errObj.isRevoked = true;
+          throw errObj;
         }
         if (!userRes.ok) {
           throw new Error('GitHub auth check failed (' + userRes.status + ').');
@@ -4657,10 +4663,22 @@
         render();
         showToast('GitHub Token & Repo Verified!');
       } catch (err) {
-        lastSyncDiagnostic = { ok: false, message: err.message };
+        lastSyncDiagnostic = { ok: false, isRevoked: Boolean(err.isRevoked), message: err.message };
         render();
         showToast('Token check failed — see message');
       }
+    }
+
+    function switchToZeroTokenRoom() {
+      state.securityConfig.ghToken = '';
+      state.securityConfig.serverMode = 'shared_room';
+      lastSyncDiagnostic = null;
+      saveState(true);
+      render();
+      setTimeout(() => {
+        const inp = document.getElementById('room-passcode-input');
+        if (inp) inp.focus();
+      }, 50);
     }
 
     function hasRemoteSyncConfigured() {
