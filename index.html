@@ -944,6 +944,7 @@
         restUrl: ''
       },
       sectionDocs: {},
+      deletedIds: [],
       queuedMutations: 0,
       trips: [
         {
@@ -1308,7 +1309,7 @@
     let itineraryMapMode = 'split';
     let activeDialogConfirm = null;
     let weatherCache = {};
-
+    let lastSyncDiagnostic = { ok: null, message: 'Not synced yet in this session.' };
     const GUI_STYLES = [
       { id: 'vintage_postcard', label: 'Vintage Postcard', icon: 'fa-envelope-open-text', desc: 'Air-mail stripes, circular stamp & handwritten note' },
       { id: 'polaroid_wall', label: 'Polaroid Wall', icon: 'fa-images', desc: 'Washi-tape pinned Polaroid cards & scrapbook grid' },
@@ -3620,6 +3621,7 @@
         const cfg = state.securityConfig || {};
         const hasPin = Boolean(cfg.pinHash);
         const hasRoom = Boolean(cfg.roomId && cfg.roomSecret);
+        const hasGhToken = Boolean(cfg.ghToken && cfg.ghToken.trim());
 
         bodyHtml = `
           <div class="space-y-4">
@@ -3633,6 +3635,17 @@
                 <div class="flex items-center gap-2">
                   <button type="button" onclick="syncNowBidirectional(false)" class="px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-extrabold"><i class="fa-solid fa-rotate mr-1"></i>Merge & Sync Both Phones</button>
                 </div>
+              </div>
+
+              <!-- Live Sync Connection Diagnostic Banner -->
+              <div class="rounded-2xl px-3.5 py-2.5 border text-xs flex flex-wrap items-center justify-between gap-2 ${lastSyncDiagnostic.ok === true ? 'bg-emerald-50 border-emerald-200 text-emerald-950' : lastSyncDiagnostic.ok === false ? 'bg-rose-50 border-rose-200 text-rose-950' : 'bg-amber-50/70 border-amber-200 text-stone-800'}">
+                <div class="flex items-center gap-2 min-w-0">
+                  <i class="fa-solid ${lastSyncDiagnostic.ok === true ? 'fa-circle-check text-emerald-600' : lastSyncDiagnostic.ok === false ? 'fa-triangle-exclamation text-rose-600' : 'fa-circle-info text-amber-600'}"></i>
+                  <span class="font-bold truncate">${escapeHtml(lastSyncDiagnostic.message)}</span>
+                </div>
+                <span class="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/80">
+                  ${cfg.serverMode === 'github' ? (hasGhToken ? 'GitHub Token Loaded' : 'Token Missing') : cfg.serverMode === 'shared_room' ? 'Shared Room' : 'Local Only'}
+                </span>
               </div>
 
               <!-- EASIEST ZERO-ACCOUNT SHARED ROOM -->
@@ -3872,6 +3885,15 @@
       if (document.getElementById('wd-pass')) cfg.webdavPass = document.getElementById('wd-pass').value.trim();
       if (document.getElementById('rest-url')) cfg.restUrl = document.getElementById('rest-url').value.trim();
 
+      if (cfg.serverMode === 'github' && (!cfg.ghOwner || !cfg.ghRepo || !cfg.ghToken)) {
+        showToast('Enter your GitHub Username, Private Repo Name, and Fine-Grained Token BEFORE saving the key file!');
+        const tokEl = document.getElementById('gh-token');
+        if (tokEl) tokEl.focus();
+        return;
+      }
+
+      await saveState(true);
+
       const keyPayload = JSON.stringify({
         voyageraKeyFile: true,
         version: 1,
@@ -3904,7 +3926,7 @@
       a.href = URL.createObjectURL(blob);
       a.download = 'voyagera-key.json';
       a.click();
-      showToast('Downloaded voyagera-key.json! Keep it in your private Drive/Files (not public GitHub).');
+      showToast('Downloaded voyagera-key.json with your token! Keep it in your private Drive/Files.');
     }
 
     function loadVaultKeyFile(input) {
@@ -3919,13 +3941,23 @@
             showToast('Invalid voyagera-key.json file.');
             return;
           }
+          if (incomingCfg.serverMode === 'github' && !incomingCfg.ghToken) {
+            lastSyncDiagnostic = { ok: false, message: 'Loaded key file has an empty GitHub token. Paste your token and re-save voyagera-key.json.' };
+            state.securityConfig = { ...state.securityConfig, ...incomingCfg, autoPullOnOpen: true };
+            await saveState(true);
+            render();
+            showToast('Warning: This key file had an empty token! Paste your token and re-save.');
+            return;
+          }
           state.securityConfig = { ...state.securityConfig, ...incomingCfg, autoPullOnOpen: true };
           await saveState(true);
           render();
-          showToast('Key file loaded! Syncing your private vault...');
-          await syncNowBidirectional(false);
+          showToast('Key file loaded! Merging & syncing with your private vault...');
+          await syncNowBidirectional(false, true);
         } catch (err) {
           showToast('Could not read key file.');
+        } finally {
+          input.value = '';
         }
       };
       reader.readAsText(file);
@@ -4211,24 +4243,20 @@
       showToast(act.completed ? 'Passport stamped!' : 'Marked unvisited');
     }
 
-    function moveActivity(cityId, actId, dir) {
-      const trip = getActiveTrip();
-      const city = trip.cities.find(c => c.id === cityId);
-      if (!city) return;
-      const idx = city.activities.findIndex(a => a.id === actId);
-      const target = idx + dir;
-      if (idx < 0 || target < 0 || target >= city.activities.length) return;
-      const temp = city.activities[idx];
-      city.activities[idx] = city.activities[target];
-      city.activities[target] = temp;
-      saveState();
-      render();
+    function recordDeletedId(id) {
+      if (!id) return;
+      if (!Array.isArray(state.deletedIds)) state.deletedIds = [];
+      if (!state.deletedIds.includes(id)) {
+        state.deletedIds.push(id);
+        if (state.deletedIds.length > 250) state.deletedIds = state.deletedIds.slice(-250);
+      }
     }
 
     function deleteActivity(cityId, actId) {
       const trip = getActiveTrip();
       const city = trip.cities.find(c => c.id === cityId);
       if (!city) return;
+      recordDeletedId(actId);
       city.activities = city.activities.filter(a => a.id !== actId);
       saveState();
       render();
@@ -4238,6 +4266,7 @@
     function deleteCity(cityId) {
       const trip = getActiveTrip();
       if (trip.cities.length <= 1) return;
+      recordDeletedId(cityId);
       trip.cities = trip.cities.filter(c => c.id !== cityId);
       state.selectedCityId = trip.cities[0].id;
       saveState();
@@ -4247,6 +4276,7 @@
 
     function deleteTicket(id) {
       const trip = getActiveTrip();
+      recordDeletedId(id);
       trip.tickets = trip.tickets.filter(t => t.id !== id);
       saveState();
       render();
@@ -4277,6 +4307,7 @@
 
     function deletePacking(id) {
       const trip = getActiveTrip();
+      recordDeletedId(id);
       trip.packing = trip.packing.filter(p => p.id !== id);
       saveState();
       render();
@@ -4297,19 +4328,342 @@
 
     function deleteGuide(id) {
       const trip = getActiveTrip();
+      recordDeletedId(id);
       trip.guides = trip.guides.filter(g => g.id !== id);
       saveState();
       render();
     }
+    function mergeById(localArr = [], remoteArr = [], deletedSet = new Set()) {
+      const map = new Map();
+      (remoteArr || []).forEach(item => {
+        if (item && item.id && !deletedSet.has(item.id)) map.set(item.id, item);
+      });
+      (localArr || []).forEach(item => {
+        if (item && item.id && !deletedSet.has(item.id)) map.set(item.id, item);
+      });
+      return Array.from(map.values());
+    }
 
-    function copyText(txt) {
-      const ta = document.createElement('textarea');
-      ta.value = txt;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-      showToast('Copied: ' + txt);
+    function mergeVaultStates(localVault, remoteVault) {
+      if (!remoteVault || !Array.isArray(remoteVault.trips)) return localVault;
+      const merged = cloneObj(localVault);
+
+      const combinedDeleted = Array.from(new Set([...(remoteVault.deletedIds || []), ...(localVault.deletedIds || [])])).slice(-250);
+      const deletedSet = new Set(combinedDeleted);
+      merged.deletedIds = combinedDeleted;
+
+      merged.travelers = mergeById(localVault.travelers, remoteVault.travelers, deletedSet);
+      merged.emergencyContacts = mergeById(localVault.emergencyContacts, remoteVault.emergencyContacts, deletedSet);
+      merged.sectionDocs = { ...(remoteVault.sectionDocs || {}), ...(localVault.sectionDocs || {}) };
+
+      const tripMap = new Map();
+      (remoteVault.trips || []).forEach(rt => {
+        if (rt && rt.id && !deletedSet.has(rt.id)) tripMap.set(rt.id, cloneObj(rt));
+      });
+
+      (localVault.trips || []).forEach(lt => {
+        if (!lt || !lt.id || deletedSet.has(lt.id)) return;
+        if (!tripMap.has(lt.id)) {
+          tripMap.set(lt.id, cloneObj(lt));
+        } else {
+          const rt = tripMap.get(lt.id);
+          const cityMap = new Map();
+          (rt.cities || []).forEach(rc => {
+            if (rc && rc.id && !deletedSet.has(rc.id)) cityMap.set(rc.id, cloneObj(rc));
+          });
+          (lt.cities || []).forEach(lc => {
+            if (!lc || !lc.id || deletedSet.has(lc.id)) return;
+            if (!cityMap.has(lc.id)) {
+              cityMap.set(lc.id, cloneObj(lc));
+            } else {
+              const rc = cityMap.get(lc.id);
+              rc.name = lc.name || rc.name;
+              rc.dates = lc.dates || rc.dates;
+              rc.notes = lc.notes || rc.notes;
+              rc.activities = mergeById(lc.activities, rc.activities, deletedSet);
+            }
+          });
+          rt.cities = Array.from(cityMap.values());
+          rt.tickets = mergeById(lt.tickets, rt.tickets, deletedSet);
+          rt.packing = mergeById(lt.packing, rt.packing, deletedSet);
+          rt.guides = mergeById(lt.guides, rt.guides, deletedSet);
+        }
+      });
+
+      merged.trips = Array.from(tripMap.values());
+      merged.securityConfig = localVault.securityConfig;
+      merged.activeUserId = localVault.activeUserId;
+      merged.activeTripId = localVault.activeTripId;
+      merged.selectedCityId = localVault.selectedCityId;
+      merged.activeTab = localVault.activeTab;
+      merged.guiStyle = localVault.guiStyle;
+      return merged;
+    }
+
+    async function createEncryptedSyncRoom(e) {
+      e.preventDefault();
+      const passInput = document.getElementById('room-passcode-input');
+      const secret = passInput ? passInput.value.trim() : '';
+      if (secret.length < 4) {
+        showToast('Choose a passcode of at least 4 characters');
+        return;
+      }
+      const roomId = 'vg_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+      state.securityConfig.serverMode = 'shared_room';
+      state.securityConfig.roomId = roomId;
+      state.securityConfig.roomSecret = secret;
+      state.securityConfig.autoPullOnOpen = true;
+      await saveState(true);
+      render();
+      await syncNowBidirectional(false, true);
+    }
+
+    async function disconnectSyncRoom() {
+      state.securityConfig.roomId = '';
+      state.securityConfig.roomSecret = '';
+      state.securityConfig.serverMode = 'local_only';
+      await saveState(true);
+      render();
+      showToast('Disconnected from shared sync room');
+    }
+
+    async function saveServerSettings() {
+      const cfg = state.securityConfig;
+      if (cfg.serverMode === 'github') {
+        cfg.ghOwner = document.getElementById('gh-owner').value.trim();
+        cfg.ghRepo = document.getElementById('gh-repo').value.trim();
+        cfg.ghToken = document.getElementById('gh-token').value.trim();
+        if (!cfg.ghOwner || !cfg.ghRepo || !cfg.ghToken) {
+          lastSyncDiagnostic = { ok: false, message: 'Enter GitHub Username, Private Repo Name, and Fine-Grained Token first.' };
+          render();
+          showToast('Please paste your GitHub Fine-Grained Token first!');
+          return;
+        }
+      } else if (cfg.serverMode === 'webdav') {
+        cfg.webdavUrl = document.getElementById('wd-url').value.trim();
+        cfg.webdavUser = document.getElementById('wd-user').value.trim();
+        cfg.webdavPass = document.getElementById('wd-pass').value.trim();
+      } else if (cfg.serverMode === 'rest') {
+        cfg.restUrl = document.getElementById('rest-url').value.trim();
+      }
+      await saveState(true);
+      await syncNowBidirectional(false, true);
+    }
+
+    let isSyncingNow = false;
+
+    async function syncNowBidirectional(silent = false, forceRender = false) {
+      if (isSyncingNow || !navigator.onLine || state.isGuestSharedView) return;
+      const cfg = state.securityConfig || {};
+      if (!cfg.serverMode || cfg.serverMode === 'local_only') return;
+
+      if (cfg.serverMode === 'github' && (!cfg.ghOwner || !cfg.ghRepo || !cfg.ghToken)) {
+        lastSyncDiagnostic = { ok: false, message: 'GitHub Token missing — paste your token or load voyagera-key.json.' };
+        updateLiveSyncBadge('No Token', false);
+        if (!silent) {
+          render();
+          showToast('GitHub Token missing! Paste your token or load voyagera-key.json.');
+        }
+        return;
+      }
+
+      isSyncingNow = true;
+      updateLiveSyncBadge('Syncing...', true);
+      const beforeSig = getVaultDataSignature(state);
+
+      try {
+        const remoteState = await fetchRemoteVaultState();
+        if (remoteState && Array.isArray(remoteState.trips)) {
+          state = mergeVaultStates(state, remoteState);
+        }
+        const afterSig = getVaultDataSignature(state);
+        const dataChanged = beforeSig !== afterSig;
+
+        if (hasPendingCloudPush || dataChanged || !remoteState) {
+          await pushStateToConfiguredServer(true);
+          hasPendingCloudPush = false;
+        } else {
+          updateLiveSyncBadge('Synced', false);
+        }
+
+        state.queuedMutations = 0;
+        await writeDbValue(STATE_KEY, state);
+        updateQueuedBadge();
+
+        const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const targetLabel = cfg.serverMode === 'github' ? `${cfg.ghOwner}/${cfg.ghRepo}` : cfg.serverMode;
+        lastSyncDiagnostic = {
+          ok: true,
+          message: `Synced with ${targetLabel} at ${nowTime}${dataChanged ? ' (merged new updates!)' : ' (up to date)'}`
+        };
+
+        if (!silent || forceRender || (dataChanged && !isUserActivelyEditing())) {
+          render();
+        }
+        if (!silent) showToast(dataChanged ? 'Synced & merged new items from other device!' : 'Synced & up to date!');
+      } catch (e) {
+        const errMsg = (e && e.message) ? e.message : 'Sync failed — check repo name & token permissions.';
+        lastSyncDiagnostic = { ok: false, message: errMsg };
+        updateLiveSyncBadge('Sync Error', false);
+        if (!silent || forceRender) {
+          render();
+          showToast(errMsg);
+        }
+      } finally {
+        isSyncingNow = false;
+      }
+    }
+
+    async function fetchRemoteVaultState() {
+      const cfg = state.securityConfig || {};
+      if (cfg.serverMode === 'shared_room' && cfg.roomId && cfg.roomSecret) {
+        const res = await fetch(`https://kvdb.io/A2x9VoyageraSync/${encodeURIComponent(cfg.roomId)}`, { cache: 'no-store' });
+        if (!res.ok) return null;
+        const wrapper = await res.json();
+        if (wrapper && wrapper.voyageraEncrypted) {
+          return await decryptPayloadAes(wrapper, cfg.roomSecret);
+        }
+        return null;
+      }
+      if (cfg.serverMode === 'github' && cfg.ghOwner && cfg.ghRepo && cfg.ghToken) {
+        const apiUrl = `https://api.github.com/repos/${cfg.ghOwner}/${cfg.ghRepo}/contents/voyagera-vault.json`;
+        const getRes = await fetch(apiUrl, {
+          cache: 'no-store',
+          headers: {
+            Authorization: `Bearer ${cfg.ghToken}`,
+            Accept: 'application/vnd.github+json'
+          }
+        });
+        if (getRes.status === 404) return null;
+        if (getRes.status === 401 || getRes.status === 403) {
+          throw new Error(`GitHub ${getRes.status}: Token invalid or lacks Contents Read/Write access to ${cfg.ghRepo}.`);
+        }
+        if (!getRes.ok) {
+          throw new Error(`GitHub Error (${getRes.status}) reading ${cfg.ghOwner}/${cfg.ghRepo}.`);
+        }
+        const fileInfo = await getRes.json();
+        const jsonStr = decodeURIComponent(escape(atob(fileInfo.content.replace(/\n/g, ''))));
+        return JSON.parse(jsonStr);
+      }
+      if (cfg.serverMode === 'webdav' && cfg.webdavUrl) {
+        const res = await fetch(cfg.webdavUrl, {
+          cache: 'no-store',
+          headers: { Authorization: 'Basic ' + btoa(`${cfg.webdavUser}:${cfg.webdavPass}`) }
+        });
+        if (!res.ok) return null;
+        return await res.json();
+      }
+      if (cfg.serverMode === 'rest' && cfg.restUrl) {
+        const res = await fetch(cfg.restUrl, { cache: 'no-store' });
+        if (!res.ok) return null;
+        return await res.json();
+      }
+      return null;
+    }
+
+    async function pushStateToConfiguredServer(silent = false, retryCount = 0) {
+      const cfg = state.securityConfig || {};
+      if (!cfg.serverMode || cfg.serverMode === 'local_only') return;
+
+      const cleanExport = cloneObj(state);
+      cleanExport.securityConfig = { pinHash: cfg.pinHash || '', serverMode: 'local_only' };
+      const bodyStr = JSON.stringify(cleanExport, null, 2);
+
+      if (cfg.serverMode === 'shared_room' && cfg.roomId && cfg.roomSecret) {
+        const encrypted = await encryptPayloadAes(bodyStr, cfg.roomSecret);
+        const res = await fetch(`https://kvdb.io/A2x9VoyageraSync/${encodeURIComponent(cfg.roomId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: encrypted
+        });
+        if (res.ok) {
+          updateLiveSyncBadge('Synced', false);
+          if (!silent) showToast('Encrypted room synced!');
+        } else {
+          throw new Error('Room sync error (' + res.status + ')');
+        }
+        return;
+      }
+
+      if (cfg.serverMode === 'github' && cfg.ghOwner && cfg.ghRepo && cfg.ghToken) {
+        const apiUrl = `https://api.github.com/repos/${cfg.ghOwner}/${cfg.ghRepo}/contents/voyagera-vault.json`;
+        let sha = null;
+        const getRes = await fetch(apiUrl, {
+          cache: 'no-store',
+          headers: {
+            Authorization: `Bearer ${cfg.ghToken}`,
+            Accept: 'application/vnd.github+json'
+          }
+        });
+        if (getRes.ok) {
+          const existing = await getRes.json();
+          sha = existing.sha;
+        } else if (getRes.status === 401 || getRes.status === 403) {
+          throw new Error(`GitHub ${getRes.status}: Token rejected for ${cfg.ghOwner}/${cfg.ghRepo}.`);
+        }
+
+        const putRes = await fetch(apiUrl, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${cfg.ghToken}`,
+            Accept: 'application/vnd.github+json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            message: 'Voyagera vault sync',
+            content: btoa(unescape(encodeURIComponent(bodyStr))),
+            ...(sha ? { sha } : {})
+          })
+        });
+
+        if (putRes.status === 409 && retryCount < 1) {
+          const freshRemote = await fetchRemoteVaultState();
+          if (freshRemote && Array.isArray(freshRemote.trips)) {
+            state = mergeVaultStates(state, freshRemote);
+          }
+          return await pushStateToConfiguredServer(silent, retryCount + 1);
+        }
+
+        if (putRes.ok) {
+          updateLiveSyncBadge('Synced', false);
+          if (!silent) showToast('Synced to Private GitHub Repo!');
+        } else if (putRes.status === 404) {
+          throw new Error(`GitHub 404: Repo "${cfg.ghOwner}/${cfg.ghRepo}" not found. Create this private repo on GitHub first!`);
+        } else {
+          throw new Error(`GitHub Save Error (${putRes.status}) on ${cfg.ghOwner}/${cfg.ghRepo}.`);
+        }
+      } else if (cfg.serverMode === 'webdav' && cfg.webdavUrl) {
+        const res = await fetch(cfg.webdavUrl, {
+          method: 'PUT',
+          headers: {
+            Authorization: 'Basic ' + btoa(`${cfg.webdavUser}:${cfg.webdavPass}`),
+            'Content-Type': 'application/json'
+          },
+          body: bodyStr
+        });
+        if (res.ok) {
+          updateLiveSyncBadge('Synced', false);
+          if (!silent) showToast('Synced to WebDAV server!');
+        } else {
+          throw new Error('WebDAV sync error (' + res.status + ')');
+        }
+      } else if (cfg.serverMode === 'rest' && cfg.restUrl) {
+        const res = await fetch(cfg.restUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: bodyStr
+        });
+        if (res.ok) {
+          updateLiveSyncBadge('Synced', false);
+          if (!silent) showToast('Synced to REST endpoint!');
+        } else {
+          throw new Error('REST sync error (' + res.status + ')');
+        }
+      }
+    }
+
+    async function pullFromConfiguredServer(silent = false) {
+      await syncNowBidirectional(silent, !silent);
     }
 
     // =========================================================================
@@ -4691,265 +5045,6 @@
       render();
     }
 
-    function mergeById(localArr = [], remoteArr = []) {
-      const map = new Map();
-      (remoteArr || []).forEach(item => { if (item && item.id) map.set(item.id, item); });
-      (localArr || []).forEach(item => { if (item && item.id) map.set(item.id, item); });
-      return Array.from(map.values());
-    }
-
-    function mergeVaultStates(localVault, remoteVault) {
-      if (!remoteVault || !Array.isArray(remoteVault.trips)) return localVault;
-      const merged = cloneObj(localVault);
-
-      merged.travelers = mergeById(localVault.travelers, remoteVault.travelers);
-      merged.emergencyContacts = mergeById(localVault.emergencyContacts, remoteVault.emergencyContacts);
-      merged.sectionDocs = { ...(remoteVault.sectionDocs || {}), ...(localVault.sectionDocs || {}) };
-
-      const tripMap = new Map();
-      (remoteVault.trips || []).forEach(rt => {
-        tripMap.set(rt.id, cloneObj(rt));
-      });
-
-      (localVault.trips || []).forEach(lt => {
-        if (!tripMap.has(lt.id)) {
-          tripMap.set(lt.id, cloneObj(lt));
-        } else {
-          const rt = tripMap.get(lt.id);
-          const cityMap = new Map();
-          (rt.cities || []).forEach(rc => cityMap.set(rc.id, cloneObj(rc)));
-          (lt.cities || []).forEach(lc => {
-            if (!cityMap.has(lc.id)) {
-              cityMap.set(lc.id, cloneObj(lc));
-            } else {
-              const rc = cityMap.get(lc.id);
-              rc.name = lc.name || rc.name;
-              rc.dates = lc.dates || rc.dates;
-              rc.notes = lc.notes || rc.notes;
-              rc.activities = mergeById(lc.activities, rc.activities);
-            }
-          });
-          rt.cities = Array.from(cityMap.values());
-          rt.tickets = mergeById(lt.tickets, rt.tickets);
-          rt.packing = mergeById(lt.packing, rt.packing);
-          rt.guides = mergeById(lt.guides, rt.guides);
-        }
-      });
-
-      merged.trips = Array.from(tripMap.values());
-      merged.securityConfig = localVault.securityConfig;
-      merged.activeUserId = localVault.activeUserId;
-      merged.activeTripId = localVault.activeTripId;
-      merged.selectedCityId = localVault.selectedCityId;
-      merged.activeTab = localVault.activeTab;
-      merged.guiStyle = localVault.guiStyle;
-      return merged;
-    }
-
-    async function createEncryptedSyncRoom(e) {
-      e.preventDefault();
-      const passInput = document.getElementById('room-passcode-input');
-      const secret = passInput ? passInput.value.trim() : '';
-      if (secret.length < 4) {
-        showToast('Choose a passcode of at least 4 characters');
-        return;
-      }
-      const roomId = 'vg_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
-      state.securityConfig.serverMode = 'shared_room';
-      state.securityConfig.roomId = roomId;
-      state.securityConfig.roomSecret = secret;
-      state.securityConfig.autoPullOnOpen = true;
-      await saveState(true);
-      render();
-      await syncNowBidirectional(false);
-    }
-
-    async function disconnectSyncRoom() {
-      state.securityConfig.roomId = '';
-      state.securityConfig.roomSecret = '';
-      state.securityConfig.serverMode = 'local_only';
-      await saveState(true);
-      render();
-      showToast('Disconnected from shared sync room');
-    }
-
-    async function saveServerSettings() {
-      const cfg = state.securityConfig;
-      if (cfg.serverMode === 'github') {
-        cfg.ghOwner = document.getElementById('gh-owner').value.trim();
-        cfg.ghRepo = document.getElementById('gh-repo').value.trim();
-        cfg.ghToken = document.getElementById('gh-token').value.trim();
-      } else if (cfg.serverMode === 'webdav') {
-        cfg.webdavUrl = document.getElementById('wd-url').value.trim();
-        cfg.webdavUser = document.getElementById('wd-user').value.trim();
-        cfg.webdavPass = document.getElementById('wd-pass').value.trim();
-      } else if (cfg.serverMode === 'rest') {
-        cfg.restUrl = document.getElementById('rest-url').value.trim();
-      }
-      await saveState(true);
-      await syncNowBidirectional(false);
-    }
-
-    let isSyncingNow = false;
-
-    async function syncNowBidirectional(silent = false) {
-      if (isSyncingNow || !navigator.onLine || state.isGuestSharedView) return;
-      const cfg = state.securityConfig || {};
-      if (!cfg.serverMode || cfg.serverMode === 'local_only') return;
-
-      isSyncingNow = true;
-      updateLiveSyncBadge('Syncing...', true);
-      const beforeSig = getVaultDataSignature(state);
-
-      try {
-        const remoteState = await fetchRemoteVaultState();
-        if (remoteState && Array.isArray(remoteState.trips)) {
-          state = mergeVaultStates(state, remoteState);
-        }
-        const afterSig = getVaultDataSignature(state);
-        const dataChanged = beforeSig !== afterSig;
-
-        if (hasPendingCloudPush || dataChanged || !remoteState) {
-          await pushStateToConfiguredServer(silent);
-          hasPendingCloudPush = false;
-        } else {
-          updateLiveSyncBadge('Synced', false);
-        }
-
-        state.queuedMutations = 0;
-        await writeDbValue(STATE_KEY, state);
-        updateQueuedBadge();
-
-        if (dataChanged && !isUserActivelyEditing()) {
-          render();
-        }
-        if (!silent) showToast('Both devices merged & synced!');
-      } catch (e) {
-        updateLiveSyncBadge('Sync Retry', false);
-        if (!silent) showToast('Sync paused — saved safely offline on this device.');
-      } finally {
-        isSyncingNow = false;
-      }
-    }
-
-    async function fetchRemoteVaultState() {
-      const cfg = state.securityConfig || {};
-      if (cfg.serverMode === 'shared_room' && cfg.roomId && cfg.roomSecret) {
-        const res = await fetch(`https://kvdb.io/A2x9VoyageraSync/${encodeURIComponent(cfg.roomId)}`);
-        if (!res.ok) return null;
-        const wrapper = await res.json();
-        if (wrapper && wrapper.voyageraEncrypted) {
-          return await decryptPayloadAes(wrapper, cfg.roomSecret);
-        }
-        return null;
-      }
-      if (cfg.serverMode === 'github' && cfg.ghOwner && cfg.ghRepo && cfg.ghToken) {
-        const apiUrl = `https://api.github.com/repos/${cfg.ghOwner}/${cfg.ghRepo}/contents/voyagera-vault.json`;
-        const getRes = await fetch(apiUrl, { headers: { Authorization: `Bearer ${cfg.ghToken}` } });
-        if (!getRes.ok) return null;
-        const fileInfo = await getRes.json();
-        const jsonStr = decodeURIComponent(escape(atob(fileInfo.content.replace(/\n/g, ''))));
-        return JSON.parse(jsonStr);
-      }
-      if (cfg.serverMode === 'webdav' && cfg.webdavUrl) {
-        const res = await fetch(cfg.webdavUrl, {
-          headers: { Authorization: 'Basic ' + btoa(`${cfg.webdavUser}:${cfg.webdavPass}`) }
-        });
-        if (!res.ok) return null;
-        return await res.json();
-      }
-      if (cfg.serverMode === 'rest' && cfg.restUrl) {
-        const res = await fetch(cfg.restUrl);
-        if (!res.ok) return null;
-        return await res.json();
-      }
-      return null;
-    }
-
-    async function pushStateToConfiguredServer(silent = false) {
-      const cfg = state.securityConfig || {};
-      if (!cfg.serverMode || cfg.serverMode === 'local_only') return;
-
-      const cleanExport = cloneObj(state);
-      cleanExport.securityConfig = { pinHash: cfg.pinHash || '', serverMode: 'local_only' };
-      const bodyStr = JSON.stringify(cleanExport, null, 2);
-
-      if (cfg.serverMode === 'shared_room' && cfg.roomId && cfg.roomSecret) {
-        const encrypted = await encryptPayloadAes(bodyStr, cfg.roomSecret);
-        const res = await fetch(`https://kvdb.io/A2x9VoyageraSync/${encodeURIComponent(cfg.roomId)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: encrypted
-        });
-        if (res.ok) {
-          updateLiveSyncBadge('Synced', false);
-          if (!silent) showToast('Encrypted room synced!');
-        } else {
-          throw new Error('Room sync error');
-        }
-        return;
-      }
-
-      if (cfg.serverMode === 'github' && cfg.ghOwner && cfg.ghRepo && cfg.ghToken) {
-        const apiUrl = `https://api.github.com/repos/${cfg.ghOwner}/${cfg.ghRepo}/contents/voyagera-vault.json`;
-        let sha = null;
-        const getRes = await fetch(apiUrl, { headers: { Authorization: `Bearer ${cfg.ghToken}` } });
-        if (getRes.ok) {
-          const existing = await getRes.json();
-          sha = existing.sha;
-        }
-        const putRes = await fetch(apiUrl, {
-          method: 'PUT',
-          headers: {
-            Authorization: `Bearer ${cfg.ghToken}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            message: 'Voyagera vault sync',
-            content: btoa(unescape(encodeURIComponent(bodyStr))),
-            ...(sha ? { sha } : {})
-          })
-        });
-        if (putRes.ok) {
-          updateLiveSyncBadge('Synced', false);
-          if (!silent) showToast('Synced to Private GitHub Repo!');
-        } else {
-          throw new Error('GitHub sync error');
-        }
-      } else if (cfg.serverMode === 'webdav' && cfg.webdavUrl) {
-        const res = await fetch(cfg.webdavUrl, {
-          method: 'PUT',
-          headers: {
-            Authorization: 'Basic ' + btoa(`${cfg.webdavUser}:${cfg.webdavPass}`),
-            'Content-Type': 'application/json'
-          },
-          body: bodyStr
-        });
-        if (res.ok) {
-          updateLiveSyncBadge('Synced', false);
-          if (!silent) showToast('Synced to WebDAV server!');
-        } else {
-          throw new Error('WebDAV sync error');
-        }
-      } else if (cfg.serverMode === 'rest' && cfg.restUrl) {
-        const res = await fetch(cfg.restUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: bodyStr
-        });
-        if (res.ok) {
-          updateLiveSyncBadge('Synced', false);
-          if (!silent) showToast('Synced to REST endpoint!');
-        } else {
-          throw new Error('REST sync error');
-        }
-      }
-    }
-
-    async function pullFromConfiguredServer(silent = false) {
-      await syncNowBidirectional(silent);
-    }
-
     // =========================================================================
     // 24. MASTER RENDER & WINDOW ONLOAD
     // =========================================================================
@@ -5011,7 +5106,7 @@
       checkPinGate();
       render();
       if (navigator.onLine && !state.isGuestSharedView && state.securityConfig && state.securityConfig.autoPullOnOpen !== false && state.securityConfig.serverMode !== 'local_only') {
-        syncNowBidirectional(true);
+        syncNowBidirectional(true, true);
       }
     };
   </script>
