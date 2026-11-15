@@ -1310,6 +1310,7 @@
     let activeDialogConfirm = null;
     let weatherCache = {};
     let lastSyncDiagnostic = { ok: null, message: 'Not synced yet in this session.' };
+
     const GUI_STYLES = [
       { id: 'vintage_postcard', label: 'Vintage Postcard', icon: 'fa-envelope-open-text', desc: 'Air-mail stripes, circular stamp & handwritten note' },
       { id: 'polaroid_wall', label: 'Polaroid Wall', icon: 'fa-images', desc: 'Washi-tape pinned Polaroid cards & scrapbook grid' },
@@ -1398,7 +1399,7 @@
         if (navigator.onLine) {
           clearTimeout(cloudPushDebounceTimer);
           cloudPushDebounceTimer = setTimeout(() => {
-            syncNowBidirectional(true);
+            syncNowBidirectional(true, false);
           }, 5000);
         } else {
           state.queuedMutations = (state.queuedMutations || 0) + 1;
@@ -1433,6 +1434,23 @@
       return safe.replace(/(https?:\/\/[^\s<]+)/g, url => {
         return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="underline font-bold text-orange-700 hover:text-orange-900 break-all">${url}</a>`;
       });
+    }
+
+    function copyText(text) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = String(text || '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        showToast('Copied to clipboard');
+      } catch (e) {
+        showToast('Unable to copy automatically');
+      }
     }
 
     function showToast(msg, actionLabel = '', actionFn = null) {
@@ -2727,7 +2745,7 @@
           </div>
 
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            ${allPosts.map(({ city, act }, idx) => {
+            ${allPosts.map(({ city, act }) => {
               const cardClass = state.guiStyle === 'polaroid_wall'
                 ? 'polaroid-stack rounded-3xl p-4 space-y-3 border border-stone-200/90'
                 : state.guiStyle === 'editorial_mag'
@@ -3633,7 +3651,7 @@
                   <p class="text-xs text-stone-500">Everything saves offline on your device first. Connect once below so changes made on your laptop or partner's phone merge automatically.</p>
                 </div>
                 <div class="flex items-center gap-2">
-                  <button type="button" onclick="syncNowBidirectional(false)" class="px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-extrabold"><i class="fa-solid fa-rotate mr-1"></i>Merge & Sync Both Phones</button>
+                  <button type="button" onclick="syncNowBidirectional(false, true)" class="px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-extrabold"><i class="fa-solid fa-rotate mr-1"></i>Merge & Sync Both Phones</button>
                 </div>
               </div>
 
@@ -3641,9 +3659,9 @@
               <div class="rounded-2xl px-3.5 py-2.5 border text-xs flex flex-wrap items-center justify-between gap-2 ${lastSyncDiagnostic.ok === true ? 'bg-emerald-50 border-emerald-200 text-emerald-950' : lastSyncDiagnostic.ok === false ? 'bg-rose-50 border-rose-200 text-rose-950' : 'bg-amber-50/70 border-amber-200 text-stone-800'}">
                 <div class="flex items-center gap-2 min-w-0">
                   <i class="fa-solid ${lastSyncDiagnostic.ok === true ? 'fa-circle-check text-emerald-600' : lastSyncDiagnostic.ok === false ? 'fa-triangle-exclamation text-rose-600' : 'fa-circle-info text-amber-600'}"></i>
-                  <span class="font-bold truncate">${escapeHtml(lastSyncDiagnostic.message)}</span>
+                  <span class="font-bold break-words">${escapeHtml(lastSyncDiagnostic.message)}</span>
                 </div>
-                <span class="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/80">
+                <span class="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/80 shrink-0">
                   ${cfg.serverMode === 'github' ? (hasGhToken ? 'GitHub Token Loaded' : 'Token Missing') : cfg.serverMode === 'shared_room' ? 'Shared Room' : 'Local Only'}
                 </span>
               </div>
@@ -3671,7 +3689,7 @@
                     <button type="button" onclick="copyFullVaultPairLink()" class="px-4 py-2 rounded-xl bg-gradient-to-r from-rose-500 to-orange-500 text-white text-xs font-extrabold shadow-2xs">
                       <i class="fa-solid fa-link mr-1.5"></i>Copy Partner & Laptop Sync Link
                     </button>
-                    <button type="button" onclick="syncNowBidirectional(false)" class="px-3.5 py-2 rounded-xl bg-stone-900 text-white text-xs font-extrabold">
+                    <button type="button" onclick="syncNowBidirectional(false, true)" class="px-3.5 py-2 rounded-xl bg-stone-900 text-white text-xs font-extrabold">
                       <i class="fa-solid fa-rotate mr-1"></i>Sync Now
                     </button>
                     <button type="button" onclick="disconnectSyncRoom()" class="px-3 py-2 rounded-xl bg-white border border-stone-200 text-stone-600 text-xs font-bold">
@@ -3717,6 +3735,7 @@
                 ${cfg.serverMode !== 'local_only' && cfg.serverMode !== 'shared_room' ? `
                   <div class="flex flex-wrap items-center gap-2 pt-1">
                     <button type="button" onclick="saveServerSettings()" class="px-4 py-2 rounded-xl bg-stone-900 text-white text-xs font-extrabold">Save & Sync Now</button>
+                    ${cfg.serverMode === 'github' ? `<button type="button" onclick="testGitHubConnection()" class="px-3.5 py-2 rounded-xl bg-sky-700 hover:bg-sky-800 text-white text-xs font-extrabold"><i class="fa-solid fa-plug-circle-check mr-1.5"></i>Test Token</button>` : ''}
                     <button type="button" onclick="downloadVaultKeyFile()" class="px-3.5 py-2 rounded-xl bg-emerald-700 text-white text-xs font-extrabold"><i class="fa-solid fa-file-arrow-down mr-1.5"></i>Save Key File (voyagera-key.json)</button>
                     <button type="button" onclick="copyFullVaultPairLink()" class="px-4 py-2 rounded-xl bg-gradient-to-r from-rose-500 to-orange-500 text-white text-xs font-extrabold shadow-2xs"><i class="fa-solid fa-link mr-1.5"></i>Copy Partner & Laptop Link</button>
                     <button type="button" onclick="copyDeviceSyncSetupKey()" class="px-3.5 py-2 rounded-xl bg-amber-100 text-amber-950 text-xs font-extrabold"><i class="fa-solid fa-key mr-1"></i>Copy Setup Key</button>
@@ -3867,7 +3886,7 @@
             await saveState(true);
             render();
             showToast('Device paired! Pulling latest trips...');
-            pullFromConfiguredServer(false);
+            syncNowBidirectional(false, true);
           } catch (e) {
             showToast('Invalid setup key.');
           }
@@ -3879,24 +3898,21 @@
       const cfg = state.securityConfig || {};
       if (document.getElementById('gh-owner')) cfg.ghOwner = document.getElementById('gh-owner').value.trim();
       if (document.getElementById('gh-repo')) cfg.ghRepo = document.getElementById('gh-repo').value.trim();
-      if (document.getElementById('gh-token')) cfg.ghToken = document.getElementById('gh-token').value.trim();
+      if (document.getElementById('gh-token')) cfg.ghToken = document.getElementById('gh-token').value.replace(/\s+/g, '');
       if (document.getElementById('wd-url')) cfg.webdavUrl = document.getElementById('wd-url').value.trim();
       if (document.getElementById('wd-user')) cfg.webdavUser = document.getElementById('wd-user').value.trim();
-      if (document.getElementById('wd-pass')) cfg.webdavPass = document.getElementById('wd-pass').value.trim();
+      if (document.getElementById('wd-pass')) cfg.webdavPass = document.getElementById('wd-pass').value;
       if (document.getElementById('rest-url')) cfg.restUrl = document.getElementById('rest-url').value.trim();
 
       if (cfg.serverMode === 'github' && (!cfg.ghOwner || !cfg.ghRepo || !cfg.ghToken)) {
-        showToast('Enter your GitHub Username, Private Repo Name, and Fine-Grained Token BEFORE saving the key file!');
-        const tokEl = document.getElementById('gh-token');
-        if (tokEl) tokEl.focus();
+        showToast('Paste your GitHub Token first before saving voyagera-key.json!');
         return;
       }
 
       await saveState(true);
-
-      const keyPayload = JSON.stringify({
+      const keyPayload = {
         voyageraKeyFile: true,
-        version: 1,
+        exportedAt: new Date().toISOString(),
         config: {
           serverMode: cfg.serverMode || 'github',
           autoPullOnOpen: true,
@@ -3910,15 +3926,16 @@
           webdavPass: cfg.webdavPass || '',
           restUrl: cfg.restUrl || ''
         }
-      }, null, 2);
-
-      const blob = new Blob([keyPayload], { type: 'application/json' });
+      };
+      const jsonStr = JSON.stringify(keyPayload, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
       const file = new File([blob], 'voyagera-key.json', { type: 'application/json' });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
-          await navigator.share({ title: 'Voyagera Key File (Keep Private)', files: [file] });
+          await navigator.share({ files: [file], title: 'Voyagera Key File' });
+          showToast('Saved voyagera-key.json!');
           return;
-        } catch (e) {
+        } catch (err) {
           // Fallback to download
         }
       }
@@ -3926,222 +3943,61 @@
       a.href = URL.createObjectURL(blob);
       a.download = 'voyagera-key.json';
       a.click();
-      showToast('Downloaded voyagera-key.json with your token! Keep it in your private Drive/Files.');
+      showToast('Downloaded voyagera-key.json! Keep it in your private Drive/Files.');
     }
 
-    function loadVaultKeyFile(input) {
-      const file = input.files && input.files[0];
+    async function loadVaultKeyFile(inputEl) {
+      const file = inputEl.files && inputEl.files[0];
       if (!file) return;
-      const reader = new FileReader();
-      reader.onload = async () => {
-        try {
-          const parsed = JSON.parse(reader.result);
-          const incomingCfg = parsed && parsed.voyageraKeyFile && parsed.config ? parsed.config : parsed;
-          if (!incomingCfg || !incomingCfg.serverMode) {
-            showToast('Invalid voyagera-key.json file.');
-            return;
-          }
-          if (incomingCfg.serverMode === 'github' && !incomingCfg.ghToken) {
-            lastSyncDiagnostic = { ok: false, message: 'Loaded key file has an empty GitHub token. Paste your token and re-save voyagera-key.json.' };
-            state.securityConfig = { ...state.securityConfig, ...incomingCfg, autoPullOnOpen: true };
-            await saveState(true);
-            render();
-            showToast('Warning: This key file had an empty token! Paste your token and re-save.');
-            return;
-          }
-          state.securityConfig = { ...state.securityConfig, ...incomingCfg, autoPullOnOpen: true };
-          await saveState(true);
-          render();
-          showToast('Key file loaded! Merging & syncing with your private vault...');
-          await syncNowBidirectional(false, true);
-        } catch (err) {
-          showToast('Could not read key file.');
-        } finally {
-          input.value = '';
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const incomingCfg = parsed && parsed.voyageraKeyFile && parsed.config ? parsed.config : parsed;
+        if (!incomingCfg || (!incomingCfg.ghToken && !incomingCfg.roomId && !incomingCfg.webdavUrl && !incomingCfg.restUrl)) {
+          showToast('Key file has no token or sync room inside. Save it after entering your token.');
+          return;
         }
-      };
-      reader.readAsText(file);
-    }
-
-    function confirmResetAppToBlank() {
-      openCustomDialog({
-        title: 'Reset to Clean Blank Vault?',
-        desc: 'This clears the demo trips so you can start fresh before hosting on GitHub. Your PIN and sync settings stay intact.',
-        showInput: false,
-        onConfirm: async () => {
-          state.trips = [
-            {
-              id: 'trip_' + Date.now(),
-              name: 'My First Journey',
-              dates: 'Upcoming Trip',
-              currency: '$',
-              currencyCode: 'USD',
-              budgetLimit: 1500,
-              cities: [
-                {
-                  id: 'city_' + (Date.now() + 1),
-                  name: 'First Destination',
-                  dates: 'Day 1',
-                  notes: 'Tap + Add Stop or use the Quick Entry bar above to start planning.',
-                  activities: []
-                }
-              ],
-              tickets: [],
-              packing: [],
-              guides: []
-            }
-          ];
-          state.activeTripId = state.trips[0].id;
-          state.selectedCityId = state.trips[0].cities[0].id;
-          state.sectionDocs = {};
-          state.activeTab = 'itinerary';
-          await saveState();
-          render();
-          showToast('Vault reset to a clean blank slate!');
-        }
-      });
-    }
-
-    function toggleEmergencyReveal() {
-      showEmergencyValues = !showEmergencyValues;
-      render();
-    }
-
-    function renderSectionDocumentVault(sectionKey, heading) {
-      const docs = state.sectionDocs[sectionKey] || [];
-      return `
-        <div class="bg-[#fffdf9] rounded-3xl p-4 sm:p-5 border border-stone-200/80 space-y-3">
-          <div class="flex items-center justify-between gap-2">
-            <h3 class="text-xs font-extrabold uppercase tracking-wider text-stone-700 flex items-center gap-2">
-              <i class="fa-solid fa-paperclip text-orange-600"></i> ${escapeHtml(heading)} (${docs.length})
-            </h3>
-            <label class="cursor-pointer px-3 py-1.5 rounded-xl bg-orange-50 hover:bg-orange-100 text-orange-700 text-xs font-extrabold">
-              <i class="fa-solid fa-upload mr-1"></i> Upload Doc
-              <input type="file" accept="image/*,.pdf,.doc,.docx,.txt" class="hidden" onchange="uploadSectionDoc('${sectionKey}', this)" />
-            </label>
-          </div>
-          ${docs.length ? `
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              ${docs.map(d => `
-                <div class="p-3 rounded-2xl bg-stone-50 border border-stone-200/70 flex items-center justify-between gap-2">
-                  <button type="button" onclick="openDocPreview('${sectionKey}', '${d.id}')" class="flex items-center gap-2.5 text-left min-w-0 flex-1">
-                    <i class="fa-solid ${d.type.startsWith('image/') ? 'fa-image text-orange-600' : 'fa-file-pdf text-rose-600'} text-base shrink-0"></i>
-                    <span class="text-xs font-bold text-stone-800 truncate">${escapeHtml(d.name)}</span>
-                  </button>
-                  <button type="button" onclick="deleteSectionDoc('${sectionKey}', '${d.id}')" class="text-stone-400 hover:text-rose-600 text-xs px-1"><i class="fa-solid fa-trash"></i></button>
-                </div>
-              `).join('')}
-            </div>
-          ` : `<p class="text-xs text-stone-400">No files attached here yet. Upload PDFs or screenshots for offline viewing.</p>`}
-        </div>
-      `;
-    }
-
-    // =========================================================================
-    // 20. TRAVELER INVOLVEMENT & FILTERED SHAREABLE LINKS
-    // =========================================================================
-    function toggleActivityTraveler(cityId, actId, travelerId) {
-      const trip = getActiveTrip();
-      const city = trip.cities.find(c => c.id === cityId);
-      const act = city ? city.activities.find(a => a.id === actId) : null;
-      if (!act) return;
-      if (!Array.isArray(act.travelerIds)) act.travelerIds = [];
-      if (act.travelerIds.includes(travelerId)) {
-        act.travelerIds = act.travelerIds.filter(id => id !== travelerId);
-      } else {
-        act.travelerIds.push(travelerId);
+        state.securityConfig = { ...state.securityConfig, ...incomingCfg };
+        await saveState(true);
+        lastSyncDiagnostic = { ok: null, message: 'Key file loaded! Syncing with cloud vault...' };
+        render();
+        await syncNowBidirectional(false, true);
+      } catch (e) {
+        showToast('Invalid voyagera-key.json file.');
+      } finally {
+        inputEl.value = '';
       }
-      saveState();
-      render();
     }
 
-    function toggleTicketTraveler(ticketId, travelerId) {
-      const trip = getActiveTrip();
-      const t = trip.tickets.find(x => x.id === ticketId);
-      if (!t) return;
-      if (!Array.isArray(t.travelerIds)) t.travelerIds = [];
-      if (t.travelerIds.includes(travelerId)) {
-        t.travelerIds = t.travelerIds.filter(id => id !== travelerId);
-      } else {
-        t.travelerIds.push(travelerId);
-      }
-      saveState();
-      render();
-    }
-
-    function addTraveler(e) {
+    async function createEncryptedSyncRoom(e) {
       e.preventDefault();
-      const name = document.getElementById('trav-name').value.trim();
-      const email = document.getElementById('trav-email').value.trim();
-      const role = document.getElementById('trav-role').value.trim() || 'Co-Traveler';
-      if (!name) return;
-      if (!Array.isArray(state.travelers)) state.travelers = [];
-      state.travelers.push({ id: 'tr_' + Date.now(), name, email, role });
-      saveState();
+      const pass = document.getElementById('room-passcode-input').value.trim();
+      if (pass.length < 4) return;
+      const randomRoom = 'vg-' + Math.random().toString(36).slice(2, 8) + '-' + Math.random().toString(36).slice(2, 6);
+      state.securityConfig.serverMode = 'shared_room';
+      state.securityConfig.roomId = randomRoom;
+      state.securityConfig.roomSecret = pass;
+      state.securityConfig.autoPullOnOpen = true;
+      await saveState(true);
+      await syncNowBidirectional(false, true);
+    }
+
+    async function disconnectSyncRoom() {
+      state.securityConfig.roomId = '';
+      state.securityConfig.roomSecret = '';
+      state.securityConfig.serverMode = 'local_only';
+      await saveState(true);
       render();
-      showToast('Added ' + name + ' to travelers');
+      showToast('Disconnected Shared Sync Room');
     }
 
-    function deleteTraveler(id) {
-      if (id === 'tr_you') return;
-      state.travelers = (state.travelers || []).filter(t => t.id !== id);
-      saveState();
-      render();
-      showToast('Traveler removed');
-    }
-
-    function buildPersonalizedShareUrl(travelerId) {
-      const trip = getActiveTrip();
-      const tr = (state.travelers || []).find(t => t.id === travelerId);
-      if (!tr) return location.href.split('#')[0];
-
-      const filteredCities = trip.cities.map(c => ({
-        ...c,
-        activities: c.activities
-          .filter(a => Array.isArray(a.travelerIds) && a.travelerIds.includes(tr.id))
-          .map(a => ({ ...a, photo: a.photo && a.photo.startsWith('http') ? a.photo : null }))
-      })).filter(c => c.activities.length > 0);
-
-      const filteredTickets = trip.tickets.filter(t => Array.isArray(t.travelerIds) && t.travelerIds.includes(tr.id));
-
-      const payload = {
-        v: 1,
-        sharedFor: { name: tr.name, email: tr.email || '' },
-        trip: {
-          id: 'shared_' + trip.id + '_' + tr.id,
-          name: `${trip.name} (${tr.name}'s Plan)`,
-          dates: trip.dates,
-          currency: trip.currency,
-          budgetLimit: trip.budgetLimit,
-          cities: filteredCities.length ? filteredCities : trip.cities.map(c => ({ ...c, activities: [] })),
-          tickets: filteredTickets,
-          packing: [],
-          guides: trip.guides || []
-        }
-      };
-
-      const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
-      return `${location.href.split('#')[0]}#voyagera_share=${encoded}`;
-    }
-
-    function copyTravelerShareLink(travelerId) {
-      const tr = (state.travelers || []).find(t => t.id === travelerId);
-      const url = buildPersonalizedShareUrl(travelerId);
-      copyText(url);
-      showToast(`Copied filtered guest link for ${tr ? tr.name : 'traveler'} (zero access to your code or vault)!`);
-    }
-
-    function copyFullVaultPairLink(travelerId = null) {
+    function copyFullVaultPairLink(forTravelerId = '') {
       const cfg = state.securityConfig || {};
-      if (cfg.serverMode === 'local_only') {
-        showToast('Create a Shared Sync Room or connect a cloud vault first.');
-        return;
-      }
       const pairPayload = {
         v: 1,
-        asUserId: travelerId || '',
+        userId: forTravelerId || '',
         config: {
-          serverMode: cfg.serverMode,
+          serverMode: cfg.serverMode || 'local_only',
           autoPullOnOpen: true,
           roomId: cfg.roomId || '',
           roomSecret: cfg.roomSecret || '',
@@ -4155,59 +4011,253 @@
         }
       };
       const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(pairPayload))));
-      const url = `${location.href.split('#')[0]}#voyagera_pair=${encoded}`;
+      const baseUrl = location.href.split('#')[0];
+      const fullLink = `${baseUrl}#voyagera_pair=${encoded}`;
+      copyText(fullLink);
+      showToast('Copied 1-Tap Partner & Laptop Sync Link! Send via WhatsApp or Email.');
+    }
+
+    // =========================================================================
+    // 20. PER-SECTION DOCUMENT VAULT
+    // =========================================================================
+    function renderSectionDocumentVault(sectionKey, title) {
+      const docs = (state.sectionDocs && state.sectionDocs[sectionKey]) || [];
+      return `
+        <div class="bg-[#fffdf9] rounded-3xl p-4 sm:p-5 border border-stone-200/80 space-y-3">
+          <div class="flex items-center justify-between gap-2">
+            <h3 class="text-xs font-extrabold uppercase tracking-wider text-stone-700"><i class="fa-solid fa-paperclip text-orange-600 mr-1.5"></i>${escapeHtml(title)} (${docs.length})</h3>
+            <label class="cursor-pointer px-3.5 py-1.5 rounded-xl bg-orange-50 hover:bg-orange-100 text-orange-700 text-xs font-extrabold">
+              <i class="fa-solid fa-upload mr-1"></i> Upload Doc
+              <input type="file" accept="image/*,.pdf,.doc,.docx,.txt" class="hidden" onchange="uploadSectionDoc('${sectionKey}', this)" />
+            </label>
+          </div>
+          ${docs.length ? `
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              ${docs.map(d => `
+                <div class="flex items-center justify-between p-3 rounded-2xl bg-stone-50 border border-stone-200/70 gap-2">
+                  <button type="button" onclick="previewSectionDoc('${sectionKey}', '${d.id}')" class="flex items-center gap-2.5 text-left min-w-0 flex-1">
+                    <i class="fa-solid ${d.type && d.type.startsWith('image/') ? 'fa-image text-orange-600' : 'fa-file-pdf text-rose-600'} text-base shrink-0"></i>
+                    <span class="text-xs font-bold text-stone-800 truncate">${escapeHtml(d.name)}</span>
+                  </button>
+                  <button type="button" onclick="deleteSectionDoc('${sectionKey}', '${d.id}')" class="text-stone-400 hover:text-rose-600 text-xs p-1"><i class="fa-solid fa-trash"></i></button>
+                </div>
+              `).join('')}
+            </div>
+          ` : `<p class="text-xs text-stone-400">No attached files yet. Upload tickets, passes, or PDFs for instant offline access.</p>`}
+        </div>
+      `;
+    }
+
+    function readFileAsDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function uploadSectionDoc(sectionKey, inputEl) {
+      const file = inputEl.files && inputEl.files[0];
+      if (!file) return;
+      const dataUrl = await readFileAsDataUrl(file);
+      if (!state.sectionDocs) state.sectionDocs = {};
+      if (!state.sectionDocs[sectionKey]) state.sectionDocs[sectionKey] = [];
+      state.sectionDocs[sectionKey].push({
+        id: 'doc_' + Date.now(),
+        name: file.name,
+        type: file.type,
+        dataUrl
+      });
+      await saveState();
+      render();
+      showToast('Document saved offline');
+    }
+
+    function previewSectionDoc(sectionKey, docId) {
+      const docs = (state.sectionDocs && state.sectionDocs[sectionKey]) || [];
+      const doc = docs.find(d => d.id === docId);
+      if (!doc) return;
+      document.getElementById('doc-preview-title').textContent = doc.name;
+      const dl = document.getElementById('doc-preview-download');
+      dl.href = doc.dataUrl;
+      dl.download = doc.name;
+      const body = document.getElementById('doc-preview-body');
+      if (doc.type && doc.type.startsWith('image/')) {
+        body.innerHTML = `<img src="${doc.dataUrl}" alt="${escapeHtml(doc.name)}" class="max-h-[70vh] rounded-2xl object-contain" />`;
+      } else if (doc.type === 'application/pdf') {
+        body.innerHTML = `<iframe src="${doc.dataUrl}" class="w-full h-[68vh] rounded-xl border-0"></iframe>`;
+      } else {
+        body.innerHTML = `<p class="text-sm font-bold text-stone-700">Ready to download: ${escapeHtml(doc.name)}</p>`;
+      }
+      document.getElementById('doc-preview-modal').classList.remove('hidden');
+    }
+
+    function previewImage(title, dataUrl) {
+      document.getElementById('doc-preview-title').textContent = title;
+      const dl = document.getElementById('doc-preview-download');
+      dl.href = dataUrl;
+      dl.download = title.replace(/\s+/g, '_') + '.jpg';
+      document.getElementById('doc-preview-body').innerHTML = `<img src="${dataUrl}" alt="${escapeHtml(title)}" class="max-h-[72vh] rounded-2xl object-contain" />`;
+      document.getElementById('doc-preview-modal').classList.remove('hidden');
+    }
+
+    function closeDocPreview() {
+      document.getElementById('doc-preview-modal').classList.add('hidden');
+    }
+
+    function deleteSectionDoc(sectionKey, docId) {
+      if (!state.sectionDocs || !state.sectionDocs[sectionKey]) return;
+      state.sectionDocs[sectionKey] = state.sectionDocs[sectionKey].filter(d => d.id !== docId);
+      saveState();
+      render();
+      showToast('Document removed');
+    }
+
+    // =========================================================================
+    // 21. MUTATIONS, TRAVELER SHARE LINKS, CLOUD SYNC & BACKUPS
+    // =========================================================================
+    function addTraveler(e) {
+      e.preventDefault();
+      const name = document.getElementById('trav-name').value.trim();
+      const email = document.getElementById('trav-email').value.trim();
+      const role = document.getElementById('trav-role').value.trim() || 'Co-Traveler';
+      if (!name) return;
+      if (!Array.isArray(state.travelers)) state.travelers = [];
+      state.travelers.push({ id: 'tr_' + Date.now(), name, email, role });
+      saveState();
+      render();
+      showToast(`Added ${name} to Travelers!`);
+    }
+
+    function deleteTraveler(id) {
+      state.travelers = (state.travelers || []).filter(t => t.id !== id);
+      state.trips.forEach(tr => {
+        tr.cities.forEach(c => c.activities.forEach(a => {
+          if (Array.isArray(a.travelerIds)) a.travelerIds = a.travelerIds.filter(x => x !== id);
+        }));
+        tr.tickets.forEach(tk => {
+          if (Array.isArray(tk.travelerIds)) tk.travelerIds = tk.travelerIds.filter(x => x !== id);
+        });
+      });
+      saveState();
+      render();
+      showToast('Traveler removed');
+    }
+
+    function toggleActivityTraveler(cityId, actId, travelerId) {
+      const trip = getActiveTrip();
+      const city = trip.cities.find(c => c.id === cityId);
+      const act = city ? city.activities.find(a => a.id === actId) : null;
+      if (!act) return;
+      if (!Array.isArray(act.travelerIds)) act.travelerIds = [];
+      if (act.travelerIds.includes(travelerId)) {
+        act.travelerIds = act.travelerIds.filter(x => x !== travelerId);
+      } else {
+        act.travelerIds.push(travelerId);
+      }
+      saveState();
+      render();
+    }
+
+    function toggleTicketTraveler(ticketId, travelerId) {
+      const trip = getActiveTrip();
+      const tk = trip.tickets.find(t => t.id === ticketId);
+      if (!tk) return;
+      if (!Array.isArray(tk.travelerIds)) tk.travelerIds = [];
+      if (tk.travelerIds.includes(travelerId)) {
+        tk.travelerIds = tk.travelerIds.filter(x => x !== travelerId);
+      } else {
+        tk.travelerIds.push(travelerId);
+      }
+      saveState();
+      render();
+    }
+
+    function buildTravelerShareUrl(travelerId) {
+      const trip = getActiveTrip();
+      const traveler = (state.travelers || []).find(t => t.id === travelerId) || { id: travelerId, name: 'Guest' };
+      const filteredCities = trip.cities.map(c => ({
+        id: c.id,
+        name: c.name,
+        dates: c.dates,
+        notes: c.notes,
+        activities: c.activities
+          .filter(a => (a.travelerIds || []).includes(travelerId))
+          .map(a => ({ id: a.id, title: a.title, category: a.category, time: a.time, price: a.price, completed: a.completed, travelerIds: a.travelerIds, note: a.note, videos: a.videos || [] }))
+      })).filter(c => c.activities.length > 0);
+
+      const filteredTickets = trip.tickets.filter(t => (t.travelerIds || []).includes(travelerId));
+      const payload = {
+        sharedFor: traveler.name,
+        trip: {
+          id: trip.id,
+          name: trip.name,
+          dates: trip.dates,
+          currency: trip.currency,
+          currencyCode: trip.currencyCode,
+          budgetLimit: trip.budgetLimit,
+          cities: filteredCities.length ? filteredCities : trip.cities.map(c => ({ ...c, activities: [] })),
+          tickets: filteredTickets,
+          packing: [],
+          guides: trip.guides || []
+        }
+      };
+      const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+      const baseUrl = location.href.split('#')[0];
+      return `${baseUrl}#voyagera_share=${encoded}`;
+    }
+
+    function copyTravelerShareLink(travelerId) {
+      const traveler = (state.travelers || []).find(t => t.id === travelerId);
+      const url = buildTravelerShareUrl(travelerId);
       copyText(url);
-      const tr = travelerId ? (state.travelers || []).find(t => t.id === travelerId) : null;
-      showToast(tr
-        ? `Copied Live Sync Link for ${tr.name}! When they open it, both phones stay synced automatically.`
-        : 'Copied Partner & Laptop Live Sync Link! Open it on your second device to pair automatically.');
+      showToast(`Copied filtered guest link for ${traveler ? traveler.name : 'traveler'} (no code or vault access)!`);
     }
 
     function emailTravelerShareLink(travelerId) {
       const trip = getActiveTrip();
-      const tr = (state.travelers || []).find(t => t.id === travelerId);
-      if (!tr || !tr.email) return;
-      const url = buildPersonalizedShareUrl(travelerId);
-      const subject = encodeURIComponent(`${trip.name} Itinerary & Bookings for ${tr.name} • Voyagera`);
-      const body = encodeURIComponent(`Hi ${tr.name},\n\nHere is your personalized itinerary and booking schedule for ${trip.name} (${trip.dates}):\n\n${url}\n\nSent from Voyagera`);
-      window.open(`mailto:${encodeURIComponent(tr.email)}?subject=${subject}&body=${body}`, '_blank');
+      const traveler = (state.travelers || []).find(t => t.id === travelerId);
+      if (!traveler || !traveler.email) return;
+      const url = buildTravelerShareUrl(travelerId);
+      const subject = encodeURIComponent(`${trip.name} Itinerary & Travel Details for ${traveler.name}`);
+      const body = encodeURIComponent(`Hi ${traveler.name},\n\nHere is your personalized itinerary link for ${trip.name} (${trip.dates}) with the stops and bookings you're involved in:\n\n${url}\n\nSent from Voyagera`);
+      window.open(`mailto:${encodeURIComponent(traveler.email)}?subject=${subject}&body=${body}`, '_blank');
     }
 
     function checkIncomingShareLink() {
       try {
-        const hash = window.location.hash || '';
+        const hash = location.hash || '';
         if (hash.startsWith('#voyagera_pair=')) {
-          const encoded = hash.slice('#voyagera_pair='.length);
-          const pairData = JSON.parse(decodeURIComponent(escape(atob(encoded))));
-          if (pairData && pairData.config) {
-            state.securityConfig = { ...state.securityConfig, ...pairData.config, autoPullOnOpen: true };
-            if (pairData.asUserId && (state.travelers || []).some(t => t.id === pairData.asUserId)) {
-              state.activeUserId = pairData.asUserId;
-            } else if ((state.travelers || []).length > 1) {
-              state.activeUserId = state.travelers[1].id;
-            }
-            history.replaceState(null, '', location.pathname + location.search);
+          const encoded = hash.replace('#voyagera_pair=', '');
+          const parsed = JSON.parse(decodeURIComponent(escape(atob(encoded))));
+          if (parsed && parsed.config) {
+            state.securityConfig = { ...state.securityConfig, ...parsed.config };
+            if (parsed.userId) state.activeUserId = parsed.userId;
             saveState(true);
-            showToast('Connected to Shared Trip Room! Syncing latest plan...');
-            syncNowBidirectional(false);
+            history.replaceState(null, '', location.pathname + location.search);
+            showToast('Connected to Shared Trip Room! Merging latest plan...');
+            setTimeout(() => syncNowBidirectional(false, true), 400);
           }
           return;
         }
+
         if (!hash.startsWith('#voyagera_share=')) return;
-        const encoded = hash.slice('#voyagera_share='.length);
+        const encoded = hash.replace('#voyagera_share=', '');
         const parsed = JSON.parse(decodeURIComponent(escape(atob(encoded))));
         if (parsed && parsed.trip) {
           state.isGuestSharedView = true;
-          const existingIdx = state.trips.findIndex(t => t.id === parsed.trip.id);
-          if (existingIdx >= 0) state.trips[existingIdx] = parsed.trip;
-          else state.trips.unshift(parsed.trip);
+          state.securityConfig = { pinHash: '', serverMode: 'local_only' };
+          state.emergencyContacts = [];
+          state.sectionDocs = {};
+          state.trips = [parsed.trip];
           state.activeTripId = parsed.trip.id;
           state.selectedCityId = parsed.trip.cities[0] ? parsed.trip.cities[0].id : null;
           state.activeTab = 'itinerary';
           const banner = document.getElementById('shared-link-banner');
           const bannerText = document.getElementById('shared-link-banner-text');
           if (banner && bannerText) {
-            bannerText.textContent = `Personalized guest view for ${parsed.sharedFor.name} • ${parsed.trip.name} (Host code & vault locked)`;
+            bannerText.textContent = `Filtered Guest View for ${parsed.sharedFor || 'Guest'} • ${parsed.trip.name} (Code & Private Vault Hidden)`;
             banner.classList.remove('hidden');
           }
         }
@@ -4216,22 +4266,16 @@
       }
     }
 
-    function dismissSharedBanner() {
+    async function dismissSharedBanner() {
       history.replaceState(null, '', location.pathname + location.search);
+      const saved = await readDbValue(STATE_KEY);
+      state = saved && saved.trips ? saved : cloneObj(DEFAULT_STATE);
       state.isGuestSharedView = false;
-      state.trips = state.trips.filter(t => !t.id.startsWith('shared_'));
-      if (state.trips[0]) {
-        state.activeTripId = state.trips[0].id;
-        state.selectedCityId = state.trips[0].cities[0] ? state.trips[0].cities[0].id : null;
-      }
       document.getElementById('shared-link-banner').classList.add('hidden');
-      saveState();
       render();
+      showToast('Restored your full private passport');
     }
 
-    // =========================================================================
-    // 21. MUTATIONS & 1-TAP REORDERING
-    // =========================================================================
     function toggleActivity(cityId, actId) {
       const trip = getActiveTrip();
       const city = trip.cities.find(c => c.id === cityId);
@@ -4240,16 +4284,28 @@
       act.completed = !act.completed;
       saveState();
       render();
-      showToast(act.completed ? 'Passport stamped!' : 'Marked unvisited');
+      showToast(act.completed ? 'Passport stamped!' : 'Unmarked');
+    }
+
+    function moveActivity(cityId, actId, dir) {
+      const trip = getActiveTrip();
+      const city = trip.cities.find(c => c.id === cityId);
+      if (!city) return;
+      const idx = city.activities.findIndex(a => a.id === actId);
+      const target = idx + dir;
+      if (idx < 0 || target < 0 || target >= city.activities.length) return;
+      const tmp = city.activities[idx];
+      city.activities[idx] = city.activities[target];
+      city.activities[target] = tmp;
+      saveState();
+      render();
     }
 
     function recordDeletedId(id) {
       if (!id) return;
       if (!Array.isArray(state.deletedIds)) state.deletedIds = [];
-      if (!state.deletedIds.includes(id)) {
-        state.deletedIds.push(id);
-        if (state.deletedIds.length > 250) state.deletedIds = state.deletedIds.slice(-250);
-      }
+      if (!state.deletedIds.includes(id)) state.deletedIds.push(id);
+      if (state.deletedIds.length > 400) state.deletedIds = state.deletedIds.slice(-400);
     }
 
     function deleteActivity(cityId, actId) {
@@ -4261,6 +4317,20 @@
       saveState();
       render();
       showToast('Stamp removed');
+    }
+
+    async function attachActivityPhoto(cityId, actId, inputEl) {
+      const file = inputEl.files && inputEl.files[0];
+      if (!file) return;
+      const dataUrl = await readFileAsDataUrl(file);
+      const trip = getActiveTrip();
+      const city = trip.cities.find(c => c.id === cityId);
+      const act = city ? city.activities.find(a => a.id === actId) : null;
+      if (!act) return;
+      act.photo = dataUrl;
+      await saveState();
+      render();
+      showToast('Polaroid photo added');
     }
 
     function deleteCity(cityId) {
@@ -4280,27 +4350,26 @@
       trip.tickets = trip.tickets.filter(t => t.id !== id);
       saveState();
       render();
-      showToast('Booking deleted');
+      showToast('Booking removed');
     }
 
     function addPackingItem(e) {
       e.preventDefault();
       const inp = document.getElementById('pack-input');
-      if (!inp.value.trim()) return;
-      getActiveTrip().packing.unshift({
-        id: 'p_' + Date.now(),
-        text: inp.value.trim(),
-        packed: false,
-        createdBy: state.activeUserId || 'tr_you'
-      });
+      const val = inp.value.trim();
+      if (!val) return;
+      const trip = getActiveTrip();
+      trip.packing.push({ id: 'p_' + Date.now(), text: val, packed: false, createdBy: state.activeUserId || 'tr_you' });
       inp.value = '';
       saveState();
       render();
     }
 
     function togglePacking(id) {
-      const item = getActiveTrip().packing.find(p => p.id === id);
-      if (item) item.packed = !item.packed;
+      const trip = getActiveTrip();
+      const item = trip.packing.find(p => p.id === id);
+      if (!item) return;
+      item.packed = !item.packed;
       saveState();
       render();
     }
@@ -4315,15 +4384,16 @@
 
     function addGuide(e) {
       e.preventDefault();
-      const category = document.getElementById('guide-category') ? document.getElementById('guide-category').value : 'Food & Where to Eat';
+      const category = document.getElementById('guide-category').value;
       const title = document.getElementById('guide-title').value.trim();
       const content = document.getElementById('guide-content').value.trim();
       if (!title || !content) return;
-      getActiveTrip().guides.unshift({ id: 'g_' + Date.now(), category, title, content });
+      const trip = getActiveTrip();
+      trip.guides.unshift({ id: 'g_' + Date.now(), category, title, content });
       showInlineGuideForm = false;
       saveState();
       render();
-      showToast('Food / Tip saved!');
+      showToast('Saved to Food & Local Tips');
     }
 
     function deleteGuide(id) {
@@ -4333,98 +4403,40 @@
       saveState();
       render();
     }
-    function mergeById(localArr = [], remoteArr = [], deletedSet = new Set()) {
-      const map = new Map();
-      (remoteArr || []).forEach(item => {
-        if (item && item.id && !deletedSet.has(item.id)) map.set(item.id, item);
-      });
-      (localArr || []).forEach(item => {
-        if (item && item.id && !deletedSet.has(item.id)) map.set(item.id, item);
-      });
-      return Array.from(map.values());
+
+    function toggleEmergencyReveal() {
+      showEmergencyValues = !showEmergencyValues;
+      render();
     }
 
-    function mergeVaultStates(localVault, remoteVault) {
-      if (!remoteVault || !Array.isArray(remoteVault.trips)) return localVault;
-      const merged = cloneObj(localVault);
-
-      const combinedDeleted = Array.from(new Set([...(remoteVault.deletedIds || []), ...(localVault.deletedIds || [])])).slice(-250);
-      const deletedSet = new Set(combinedDeleted);
-      merged.deletedIds = combinedDeleted;
-
-      merged.travelers = mergeById(localVault.travelers, remoteVault.travelers, deletedSet);
-      merged.emergencyContacts = mergeById(localVault.emergencyContacts, remoteVault.emergencyContacts, deletedSet);
-      merged.sectionDocs = { ...(remoteVault.sectionDocs || {}), ...(localVault.sectionDocs || {}) };
-
-      const tripMap = new Map();
-      (remoteVault.trips || []).forEach(rt => {
-        if (rt && rt.id && !deletedSet.has(rt.id)) tripMap.set(rt.id, cloneObj(rt));
-      });
-
-      (localVault.trips || []).forEach(lt => {
-        if (!lt || !lt.id || deletedSet.has(lt.id)) return;
-        if (!tripMap.has(lt.id)) {
-          tripMap.set(lt.id, cloneObj(lt));
-        } else {
-          const rt = tripMap.get(lt.id);
-          const cityMap = new Map();
-          (rt.cities || []).forEach(rc => {
-            if (rc && rc.id && !deletedSet.has(rc.id)) cityMap.set(rc.id, cloneObj(rc));
-          });
-          (lt.cities || []).forEach(lc => {
-            if (!lc || !lc.id || deletedSet.has(lc.id)) return;
-            if (!cityMap.has(lc.id)) {
-              cityMap.set(lc.id, cloneObj(lc));
-            } else {
-              const rc = cityMap.get(lc.id);
-              rc.name = lc.name || rc.name;
-              rc.dates = lc.dates || rc.dates;
-              rc.notes = lc.notes || rc.notes;
-              rc.activities = mergeById(lc.activities, rc.activities, deletedSet);
-            }
-          });
-          rt.cities = Array.from(cityMap.values());
-          rt.tickets = mergeById(lt.tickets, rt.tickets, deletedSet);
-          rt.packing = mergeById(lt.packing, rt.packing, deletedSet);
-          rt.guides = mergeById(lt.guides, rt.guides, deletedSet);
-        }
-      });
-
-      merged.trips = Array.from(tripMap.values());
-      merged.securityConfig = localVault.securityConfig;
-      merged.activeUserId = localVault.activeUserId;
-      merged.activeTripId = localVault.activeTripId;
-      merged.selectedCityId = localVault.selectedCityId;
-      merged.activeTab = localVault.activeTab;
-      merged.guiStyle = localVault.guiStyle;
-      return merged;
-    }
-
-    async function createEncryptedSyncRoom(e) {
+    // =========================================================================
+    // 22. PIN LOCK, 2-WAY CONFLICT-FREE SYNC, GOOGLE DRIVE & CLEAN RESET
+    // =========================================================================
+    async function saveNewPin(e) {
       e.preventDefault();
-      const passInput = document.getElementById('room-passcode-input');
-      const secret = passInput ? passInput.value.trim() : '';
-      if (secret.length < 4) {
-        showToast('Choose a passcode of at least 4 characters');
-        return;
-      }
-      const roomId = 'vg_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
-      state.securityConfig.serverMode = 'shared_room';
-      state.securityConfig.roomId = roomId;
-      state.securityConfig.roomSecret = secret;
-      state.securityConfig.autoPullOnOpen = true;
+      const pin = document.getElementById('new-pin-input').value.trim();
+      if (pin.length < 4) return;
+      state.securityConfig.pinHash = await hashPin(pin);
+      sessionStorage.setItem('voyagera_unlocked', '1');
       await saveState(true);
+      checkPinGate();
       render();
-      await syncNowBidirectional(false, true);
+      showToast('App PIN lock saved');
     }
 
-    async function disconnectSyncRoom() {
-      state.securityConfig.roomId = '';
-      state.securityConfig.roomSecret = '';
-      state.securityConfig.serverMode = 'local_only';
+    async function removePin() {
+      state.securityConfig.pinHash = '';
+      sessionStorage.removeItem('voyagera_unlocked');
       await saveState(true);
+      checkPinGate();
       render();
-      showToast('Disconnected from shared sync room');
+      showToast('PIN lock removed');
+    }
+
+    function changeServerMode(mode) {
+      state.securityConfig.serverMode = mode;
+      saveState(true);
+      render();
     }
 
     async function saveServerSettings() {
@@ -4432,17 +4444,17 @@
       if (cfg.serverMode === 'github') {
         cfg.ghOwner = document.getElementById('gh-owner').value.trim();
         cfg.ghRepo = document.getElementById('gh-repo').value.trim();
-        cfg.ghToken = document.getElementById('gh-token').value.trim();
+        cfg.ghToken = document.getElementById('gh-token').value.replace(/\s+/g, '');
         if (!cfg.ghOwner || !cfg.ghRepo || !cfg.ghToken) {
-          lastSyncDiagnostic = { ok: false, message: 'Enter GitHub Username, Private Repo Name, and Fine-Grained Token first.' };
+          lastSyncDiagnostic = { ok: false, message: 'Enter GitHub Username, Private Repo Name, and Token first.' };
           render();
-          showToast('Please paste your GitHub Fine-Grained Token first!');
+          showToast('Please paste your GitHub Token first!');
           return;
         }
       } else if (cfg.serverMode === 'webdav') {
         cfg.webdavUrl = document.getElementById('wd-url').value.trim();
         cfg.webdavUser = document.getElementById('wd-user').value.trim();
-        cfg.webdavPass = document.getElementById('wd-pass').value.trim();
+        cfg.webdavPass = document.getElementById('wd-pass').value;
       } else if (cfg.serverMode === 'rest') {
         cfg.restUrl = document.getElementById('rest-url').value.trim();
       }
@@ -4450,81 +4462,151 @@
       await syncNowBidirectional(false, true);
     }
 
-    let isSyncingNow = false;
+    async function testGitHubConnection() {
+      const cfg = state.securityConfig;
+      if (document.getElementById('gh-owner')) cfg.ghOwner = document.getElementById('gh-owner').value.trim();
+      if (document.getElementById('gh-repo')) cfg.ghRepo = document.getElementById('gh-repo').value.trim();
+      if (document.getElementById('gh-token')) cfg.ghToken = document.getElementById('gh-token').value.replace(/\s+/g, '');
 
-    async function syncNowBidirectional(silent = false, forceRender = false) {
-      if (isSyncingNow || !navigator.onLine || state.isGuestSharedView) return;
-      const cfg = state.securityConfig || {};
-      if (!cfg.serverMode || cfg.serverMode === 'local_only') return;
-
-      if (cfg.serverMode === 'github' && (!cfg.ghOwner || !cfg.ghRepo || !cfg.ghToken)) {
-        lastSyncDiagnostic = { ok: false, message: 'GitHub Token missing — paste your token or load voyagera-key.json.' };
-        updateLiveSyncBadge('No Token', false);
-        if (!silent) {
-          render();
-          showToast('GitHub Token missing! Paste your token or load voyagera-key.json.');
-        }
+      if (!cfg.ghOwner || !cfg.ghRepo || !cfg.ghToken) {
+        lastSyncDiagnostic = { ok: false, message: 'Enter GitHub Username, Private Repo Name, and Token first.' };
+        render();
+        showToast('Enter Username, Repo Name, and Token first.');
         return;
       }
 
-      isSyncingNow = true;
-      updateLiveSyncBadge('Syncing...', true);
-      const beforeSig = getVaultDataSignature(state);
+      await saveState(true);
+      lastSyncDiagnostic = { ok: null, message: 'Testing GitHub token & repository access...' };
+      render();
 
       try {
-        const remoteState = await fetchRemoteVaultState();
-        if (remoteState && Array.isArray(remoteState.trips)) {
-          state = mergeVaultStates(state, remoteState);
+        const userRes = await fetch('https://api.github.com/user', {
+          cache: 'no-store',
+          headers: { Authorization: `Bearer ${cfg.ghToken}`, Accept: 'application/vnd.github+json' }
+        });
+        if (!userRes.ok) {
+          const errJson = await userRes.json().catch(() => ({}));
+          const reason = errJson.message || 'Bad credentials';
+          lastSyncDiagnostic = {
+            ok: false,
+            message: `GitHub ${userRes.status} (${reason}): Token was revoked, expired, or mistyped. Generate a fresh token on GitHub.`
+          };
+          render();
+          showToast(`GitHub ${userRes.status}: ${reason}`);
+          return;
         }
-        const afterSig = getVaultDataSignature(state);
-        const dataChanged = beforeSig !== afterSig;
 
-        if (hasPendingCloudPush || dataChanged || !remoteState) {
-          await pushStateToConfiguredServer(true);
-          hasPendingCloudPush = false;
-        } else {
-          updateLiveSyncBadge('Synced', false);
+        const userData = await userRes.json();
+        const repoRes = await fetch(`https://api.github.com/repos/${cfg.ghOwner}/${cfg.ghRepo}`, {
+          cache: 'no-store',
+          headers: { Authorization: `Bearer ${cfg.ghToken}`, Accept: 'application/vnd.github+json' }
+        });
+
+        if (!repoRes.ok) {
+          lastSyncDiagnostic = {
+            ok: false,
+            message: `Token valid for @${userData.login}, but "${cfg.ghOwner}/${cfg.ghRepo}" returned ${repoRes.status}. Create that private repo or grant token access to it.`
+          };
+          render();
+          showToast(`Repo "${cfg.ghRepo}" not accessible (${repoRes.status})`);
+          return;
         }
 
-        state.queuedMutations = 0;
-        await writeDbValue(STATE_KEY, state);
-        updateQueuedBadge();
+        const repoData = await repoRes.json();
+        if (repoData.permissions && repoData.permissions.push === false) {
+          lastSyncDiagnostic = {
+            ok: false,
+            message: `Token valid, but it only has READ access to "${cfg.ghRepo}". Enable "Contents: Read and write" on GitHub.`
+          };
+          render();
+          showToast('Token lacks Write permission on this repo!');
+          return;
+        }
 
-        const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        const targetLabel = cfg.serverMode === 'github' ? `${cfg.ghOwner}/${cfg.ghRepo}` : cfg.serverMode;
         lastSyncDiagnostic = {
           ok: true,
-          message: `Synced with ${targetLabel} at ${nowTime}${dataChanged ? ' (merged new updates!)' : ' (up to date)'}`
+          message: `Token verified for @${userData.login} with Read & Write access to ${cfg.ghOwner}/${cfg.ghRepo}! Syncing now...`
         };
-
-        if (!silent || forceRender || (dataChanged && !isUserActivelyEditing())) {
-          render();
-        }
-        if (!silent) showToast(dataChanged ? 'Synced & merged new items from other device!' : 'Synced & up to date!');
+        render();
+        await syncNowBidirectional(false, true);
       } catch (e) {
-        const errMsg = (e && e.message) ? e.message : 'Sync failed — check repo name & token permissions.';
-        lastSyncDiagnostic = { ok: false, message: errMsg };
-        updateLiveSyncBadge('Sync Error', false);
-        if (!silent || forceRender) {
-          render();
-          showToast(errMsg);
-        }
-      } finally {
-        isSyncingNow = false;
+        lastSyncDiagnostic = { ok: false, message: 'Network error reaching GitHub API.' };
+        render();
       }
     }
 
-    async function fetchRemoteVaultState() {
-      const cfg = state.securityConfig || {};
-      if (cfg.serverMode === 'shared_room' && cfg.roomId && cfg.roomSecret) {
-        const res = await fetch(`https://kvdb.io/A2x9VoyageraSync/${encodeURIComponent(cfg.roomId)}`, { cache: 'no-store' });
-        if (!res.ok) return null;
-        const wrapper = await res.json();
-        if (wrapper && wrapper.voyageraEncrypted) {
-          return await decryptPayloadAes(wrapper, cfg.roomSecret);
+    let isSyncingNow = false;
+
+    function mergeArraysById(localArr, remoteArr, deletedSet) {
+      const map = new Map();
+      (remoteArr || []).forEach(item => {
+        if (item && item.id && !deletedSet.has(item.id)) map.set(item.id, cloneObj(item));
+      });
+      (localArr || []).forEach(item => {
+        if (item && item.id && !deletedSet.has(item.id)) map.set(item.id, cloneObj(item));
+      });
+      return Array.from(map.values());
+    }
+
+    function mergeVaultStates(localObj, remoteObj) {
+      if (!remoteObj || !Array.isArray(remoteObj.trips)) return localObj;
+      const merged = cloneObj(localObj);
+      const deletedSet = new Set([...(localObj.deletedIds || []), ...(remoteObj.deletedIds || [])]);
+      merged.deletedIds = Array.from(deletedSet).slice(-400);
+
+      merged.travelers = mergeArraysById(localObj.travelers, remoteObj.travelers, deletedSet);
+      merged.emergencyContacts = mergeArraysById(localObj.emergencyContacts, remoteObj.emergencyContacts, deletedSet);
+      merged.sectionDocs = { ...(remoteObj.sectionDocs || {}), ...(localObj.sectionDocs || {}) };
+
+      const tripMap = new Map();
+      (remoteObj.trips || []).forEach(rt => {
+        if (!deletedSet.has(rt.id)) tripMap.set(rt.id, cloneObj(rt));
+      });
+
+      (localObj.trips || []).forEach(lt => {
+        if (deletedSet.has(lt.id)) return;
+        if (!tripMap.has(lt.id)) {
+          tripMap.set(lt.id, cloneObj(lt));
+          return;
         }
-        return null;
+        const rt = tripMap.get(lt.id);
+        const cityMap = new Map();
+        (rt.cities || []).forEach(rc => {
+          if (!deletedSet.has(rc.id)) cityMap.set(rc.id, cloneObj(rc));
+        });
+        (lt.cities || []).forEach(lc => {
+          if (deletedSet.has(lc.id)) return;
+          if (!cityMap.has(lc.id)) {
+            cityMap.set(lc.id, cloneObj(lc));
+          } else {
+            const rc = cityMap.get(lc.id);
+            rc.activities = mergeArraysById(lc.activities, rc.activities, deletedSet);
+            cityMap.set(lc.id, rc);
+          }
+        });
+        rt.cities = Array.from(cityMap.values());
+        rt.tickets = mergeArraysById(lt.tickets, rt.tickets, deletedSet);
+        rt.packing = mergeArraysById(lt.packing, rt.packing, deletedSet);
+        rt.guides = mergeArraysById(lt.guides, rt.guides, deletedSet);
+        tripMap.set(lt.id, rt);
+      });
+
+      merged.trips = Array.from(tripMap.values());
+      return merged;
+    }
+
+    async function fetchRemoteVaultObject() {
+      const cfg = state.securityConfig;
+      if (!cfg) return null;
+
+      if (cfg.serverMode === 'shared_room' && cfg.roomId && cfg.roomSecret) {
+        const res = await fetch(`https://kvdb.io/A2x9VoyageraVault99/${encodeURIComponent(cfg.roomId)}`, { cache: 'no-store' });
+        if (res.status === 404) return null;
+        if (!res.ok) throw new Error('Shared Room fetch failed (' + res.status + ')');
+        const wrapper = await res.json();
+        return wrapper && wrapper.voyageraEncrypted ? await decryptPayloadAes(wrapper, cfg.roomSecret) : wrapper;
       }
+
       if (cfg.serverMode === 'github' && cfg.ghOwner && cfg.ghRepo && cfg.ghToken) {
         const apiUrl = `https://api.github.com/repos/${cfg.ghOwner}/${cfg.ghRepo}/contents/voyagera-vault.json`;
         const getRes = await fetch(apiUrl, {
@@ -4536,7 +4618,8 @@
         });
         if (getRes.status === 404) return null;
         if (getRes.status === 401 || getRes.status === 403) {
-          throw new Error(`GitHub ${getRes.status}: Token invalid or lacks Contents Read/Write access to ${cfg.ghRepo}.`);
+          const errJson = await getRes.json().catch(() => ({}));
+          throw new Error(`GitHub ${getRes.status} (${errJson.message || 'Bad credentials'}): Token revoked, expired, or lacks Contents Read/Write access.`);
         }
         if (!getRes.ok) {
           throw new Error(`GitHub Error (${getRes.status}) reading ${cfg.ghOwner}/${cfg.ghRepo}.`);
@@ -4545,6 +4628,7 @@
         const jsonStr = decodeURIComponent(escape(atob(fileInfo.content.replace(/\n/g, ''))));
         return JSON.parse(jsonStr);
       }
+
       if (cfg.serverMode === 'webdav' && cfg.webdavUrl) {
         const res = await fetch(cfg.webdavUrl, {
           cache: 'no-store',
@@ -4553,86 +4637,71 @@
         if (!res.ok) return null;
         return await res.json();
       }
+
       if (cfg.serverMode === 'rest' && cfg.restUrl) {
         const res = await fetch(cfg.restUrl, { cache: 'no-store' });
         if (!res.ok) return null;
         return await res.json();
       }
+
       return null;
     }
 
-    async function pushStateToConfiguredServer(silent = false, retryCount = 0) {
-      const cfg = state.securityConfig || {};
-      if (!cfg.serverMode || cfg.serverMode === 'local_only') return;
-
-      const cleanExport = cloneObj(state);
-      cleanExport.securityConfig = { pinHash: cfg.pinHash || '', serverMode: 'local_only' };
-      const bodyStr = JSON.stringify(cleanExport, null, 2);
+    async function pushRemoteVaultObject(payloadObj) {
+      const cfg = state.securityConfig;
+      const bodyStr = JSON.stringify(payloadObj);
 
       if (cfg.serverMode === 'shared_room' && cfg.roomId && cfg.roomSecret) {
-        const encrypted = await encryptPayloadAes(bodyStr, cfg.roomSecret);
-        const res = await fetch(`https://kvdb.io/A2x9VoyageraSync/${encodeURIComponent(cfg.roomId)}`, {
+        const encryptedStr = await encryptPayloadAes(bodyStr, cfg.roomSecret);
+        const res = await fetch(`https://kvdb.io/A2x9VoyageraVault99/${encodeURIComponent(cfg.roomId)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: encrypted
+          body: encryptedStr
         });
-        if (res.ok) {
-          updateLiveSyncBadge('Synced', false);
-          if (!silent) showToast('Encrypted room synced!');
-        } else {
-          throw new Error('Room sync error (' + res.status + ')');
-        }
+        if (!res.ok) throw new Error('Shared Room push failed (' + res.status + ')');
         return;
       }
 
       if (cfg.serverMode === 'github' && cfg.ghOwner && cfg.ghRepo && cfg.ghToken) {
         const apiUrl = `https://api.github.com/repos/${cfg.ghOwner}/${cfg.ghRepo}/contents/voyagera-vault.json`;
-        let sha = null;
-        const getRes = await fetch(apiUrl, {
-          cache: 'no-store',
-          headers: {
-            Authorization: `Bearer ${cfg.ghToken}`,
-            Accept: 'application/vnd.github+json'
+        for (let attempt = 0; attempt < 2; attempt++) {
+          let sha = null;
+          const getRes = await fetch(apiUrl, {
+            cache: 'no-store',
+            headers: {
+              Authorization: `Bearer ${cfg.ghToken}`,
+              Accept: 'application/vnd.github+json'
+            }
+          });
+          if (getRes.ok) {
+            const existing = await getRes.json();
+            sha = existing.sha;
+          } else if (getRes.status === 401 || getRes.status === 403) {
+            const errJson = await getRes.json().catch(() => ({}));
+            throw new Error(`GitHub ${getRes.status} (${errJson.message || 'Bad credentials'}): Token rejected for ${cfg.ghOwner}/${cfg.ghRepo}.`);
           }
-        });
-        if (getRes.ok) {
-          const existing = await getRes.json();
-          sha = existing.sha;
-        } else if (getRes.status === 401 || getRes.status === 403) {
-          throw new Error(`GitHub ${getRes.status}: Token rejected for ${cfg.ghOwner}/${cfg.ghRepo}.`);
-        }
 
-        const putRes = await fetch(apiUrl, {
-          method: 'PUT',
-          headers: {
-            Authorization: `Bearer ${cfg.ghToken}`,
-            Accept: 'application/vnd.github+json',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            message: 'Voyagera vault sync',
-            content: btoa(unescape(encodeURIComponent(bodyStr))),
-            ...(sha ? { sha } : {})
-          })
-        });
-
-        if (putRes.status === 409 && retryCount < 1) {
-          const freshRemote = await fetchRemoteVaultState();
-          if (freshRemote && Array.isArray(freshRemote.trips)) {
-            state = mergeVaultStates(state, freshRemote);
-          }
-          return await pushStateToConfiguredServer(silent, retryCount + 1);
+          const putRes = await fetch(apiUrl, {
+            method: 'PUT',
+            headers: {
+              Authorization: `Bearer ${cfg.ghToken}`,
+              Accept: 'application/vnd.github+json',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              message: 'Sync Voyagera vault',
+              content: btoa(unescape(encodeURIComponent(bodyStr))),
+              ...(sha ? { sha } : {})
+            })
+          });
+          if (putRes.ok) return;
+          if (putRes.status === 409 && attempt === 0) continue;
+          const putErr = await putRes.json().catch(() => ({}));
+          throw new Error(`GitHub Push ${putRes.status}: ${putErr.message || 'Failed to write voyagera-vault.json'}`);
         }
+      }
 
-        if (putRes.ok) {
-          updateLiveSyncBadge('Synced', false);
-          if (!silent) showToast('Synced to Private GitHub Repo!');
-        } else if (putRes.status === 404) {
-          throw new Error(`GitHub 404: Repo "${cfg.ghOwner}/${cfg.ghRepo}" not found. Create this private repo on GitHub first!`);
-        } else {
-          throw new Error(`GitHub Save Error (${putRes.status}) on ${cfg.ghOwner}/${cfg.ghRepo}.`);
-        }
-      } else if (cfg.serverMode === 'webdav' && cfg.webdavUrl) {
+      if (cfg.serverMode === 'webdav' && cfg.webdavUrl) {
         const res = await fetch(cfg.webdavUrl, {
           method: 'PUT',
           headers: {
@@ -4641,24 +4710,97 @@
           },
           body: bodyStr
         });
-        if (res.ok) {
-          updateLiveSyncBadge('Synced', false);
-          if (!silent) showToast('Synced to WebDAV server!');
-        } else {
-          throw new Error('WebDAV sync error (' + res.status + ')');
-        }
-      } else if (cfg.serverMode === 'rest' && cfg.restUrl) {
+        if (!res.ok) throw new Error('WebDAV push failed (' + res.status + ')');
+      }
+
+      if (cfg.serverMode === 'rest' && cfg.restUrl) {
         const res = await fetch(cfg.restUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: bodyStr
         });
-        if (res.ok) {
-          updateLiveSyncBadge('Synced', false);
-          if (!silent) showToast('Synced to REST endpoint!');
-        } else {
-          throw new Error('REST sync error (' + res.status + ')');
+        if (!res.ok) throw new Error('REST push failed (' + res.status + ')');
+      }
+    }
+
+    async function syncNowBidirectional(silent = false, forceRender = false) {
+      if (state.isGuestSharedView) return;
+      const cfg = state.securityConfig;
+      if (!cfg || cfg.serverMode === 'local_only') {
+        if (!silent) showToast('Saved locally on this device.');
+        return;
+      }
+      if (cfg.serverMode === 'github' && (!cfg.ghOwner || !cfg.ghRepo || !cfg.ghToken)) {
+        lastSyncDiagnostic = { ok: false, message: 'GitHub Token missing — paste your Fine-Grained Token or load voyagera-key.json.' };
+        if (!silent) {
+          render();
+          showToast('Please enter your GitHub Token first!');
         }
+        return;
+      }
+      if (!navigator.onLine) {
+        if (!silent) showToast('Offline — changes queued for auto-sync.');
+        return;
+      }
+      if (isSyncingNow) return;
+      isSyncingNow = true;
+      updateLiveSyncBadge('Syncing...', true);
+
+      try {
+        const beforeSig = getVaultDataSignature(state);
+        const remoteObj = await fetchRemoteVaultObject();
+        const remoteSig = remoteObj ? getVaultDataSignature(remoteObj) : '';
+        const merged = remoteObj ? mergeVaultStates(state, remoteObj) : cloneObj(state);
+        const afterSig = getVaultDataSignature(merged);
+        const localChanged = afterSig !== beforeSig;
+        const remoteNeedsUpdate = !remoteObj || afterSig !== remoteSig || hasPendingCloudPush;
+
+        merged.queuedMutations = 0;
+        if (localChanged) {
+          const keepTripId = state.activeTripId;
+          const keepCityId = state.selectedCityId;
+          const keepTab = state.activeTab;
+          const keepAuthor = state.activeUserId;
+          const keepCfg = cloneObj(state.securityConfig);
+          state = merged;
+          state.activeTripId = keepTripId;
+          state.selectedCityId = keepCityId;
+          state.activeTab = keepTab;
+          state.activeUserId = keepAuthor;
+          state.securityConfig = keepCfg;
+          sortTripsByDate();
+          await writeDbValue(STATE_KEY, state);
+        }
+
+        if (remoteNeedsUpdate) {
+          const safeRemotePayload = cloneObj(state);
+          delete safeRemotePayload.securityConfig;
+          await pushRemoteVaultObject(safeRemotePayload);
+        }
+
+        hasPendingCloudPush = false;
+        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        lastSyncDiagnostic = {
+          ok: true,
+          message: cfg.serverMode === 'github'
+            ? `Synced with ${cfg.ghOwner}/${cfg.ghRepo} at ${timeStr}`
+            : `Synced with ${cfg.roomId || 'Cloud Vault'} at ${timeStr}`
+        };
+        updateLiveSyncBadge('Synced', false);
+        updateQueuedBadge();
+        if ((localChanged || forceRender) && (forceRender || !isUserActivelyEditing())) {
+          render();
+        }
+        if (!silent) showToast(localChanged ? 'Merged new updates from cloud!' : 'Vault is up to date!');
+      } catch (err) {
+        lastSyncDiagnostic = { ok: false, message: err.message || 'Sync error — check token or network.' };
+        updateLiveSyncBadge('Retry Sync', false);
+        if (!silent) {
+          render();
+          showToast(err.message || 'Sync error — check connection settings');
+        }
+      } finally {
+        isSyncingNow = false;
       }
     }
 
@@ -4666,91 +4808,162 @@
       await syncNowBidirectional(silent, !silent);
     }
 
-    // =========================================================================
-    // 22. FILE ATTACHMENTS & MODALS
-    // =========================================================================
-    function readFileAsDataUrl(file) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
+    async function shareVaultNative() {
+      const jsonStr = JSON.stringify(state, null, 2);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const file = new File([blob], 'voyagera-vault.json', { type: 'application/json' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: 'Voyagera Vault Backup' });
+          showToast('Shared to Google Drive / iCloud');
+          return;
+        } catch (e) {
+          // Fallback to download
+        }
+      }
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'voyagera-vault.json';
+      a.click();
+      showToast('Downloaded voyagera-vault.json');
     }
 
-    async function attachActivityPhoto(cityId, actId, input) {
-      const file = input.files && input.files[0];
-      if (!file) return;
-      const dataUrl = await readFileAsDataUrl(file);
-      const trip = getActiveTrip();
-      const city = trip.cities.find(c => c.id === cityId);
-      const act = city ? city.activities.find(a => a.id === actId) : null;
-      if (act) {
-        act.photo = dataUrl;
-        await saveState();
-        render();
-        showToast('Photo saved offline!');
+    async function linkLocalSyncFolder() {
+      if (!window.showDirectoryPicker) {
+        showToast('Direct folder linking works on Chrome/Edge desktop. Use Share / Save on mobile.');
+        return;
+      }
+      try {
+        const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+        const fileHandle = await dirHandle.getFileHandle('voyagera-vault.json', { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(JSON.stringify(state, null, 2));
+        await writable.close();
+        showToast('Linked & mirrored to local Google Drive / iCloud folder!');
+      } catch (e) {
+        showToast('Folder linking cancelled');
       }
     }
 
-    async function uploadSectionDoc(sectionKey, input) {
-      const file = input.files && input.files[0];
-      if (!file) return;
-      const dataUrl = await readFileAsDataUrl(file);
-      if (!state.sectionDocs[sectionKey]) state.sectionDocs[sectionKey] = [];
-      state.sectionDocs[sectionKey].push({
-        id: 'doc_' + Date.now(),
-        name: file.name,
-        type: file.type || 'application/octet-stream',
-        dataUrl
+    function exportEncryptedVault() {
+      openCustomDialog({
+        title: 'AES-256 Encrypted Backup',
+        desc: 'Enter a secret backup passphrase (you will need this same passphrase to restore):',
+        showInput: true,
+        placeholder: 'Enter secret passphrase...',
+        onConfirm: async pass => {
+          if (!pass || pass.trim().length < 4) {
+            showToast('Use a passphrase of at least 4 characters');
+            return;
+          }
+          const encJson = await encryptPayloadAes(JSON.stringify(state), pass.trim());
+          const blob = new Blob([encJson], { type: 'application/json' });
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'voyagera-encrypted-backup.json';
+          a.click();
+          showToast('AES-256 encrypted backup exported');
+        }
       });
-      await saveState();
-      render();
-      showToast('Document saved offline');
     }
 
-    function deleteSectionDoc(sectionKey, docId) {
-      if (!state.sectionDocs[sectionKey]) return;
-      state.sectionDocs[sectionKey] = state.sectionDocs[sectionKey].filter(d => d.id !== docId);
-      saveState();
-      render();
-    }
-
-    function openDocPreview(sectionKey, docId) {
-      const doc = (state.sectionDocs[sectionKey] || []).find(d => d.id === docId);
-      if (!doc) return;
-      document.getElementById('doc-preview-title').textContent = doc.name;
-      const dl = document.getElementById('doc-preview-download');
-      dl.href = doc.dataUrl;
-      dl.download = doc.name;
-      const body = document.getElementById('doc-preview-body');
-      if (doc.type.startsWith('image/')) {
-        body.innerHTML = `<img src="${doc.dataUrl}" alt="${escapeHtml(doc.name)}" class="max-h-[70vh] rounded-2xl object-contain" />`;
-      } else if (doc.type === 'application/pdf') {
-        body.innerHTML = `<iframe src="${doc.dataUrl}" class="w-full h-[65vh] rounded-xl border-0"></iframe>`;
-      } else {
-        body.innerHTML = `<div class="text-center space-y-2"><p class="text-sm font-bold">${escapeHtml(doc.name)}</p><p class="text-xs text-stone-500">Tap Download above to open this file offline.</p></div>`;
+    async function importVaultFile(inputEl) {
+      const file = inputEl.files && inputEl.files[0];
+      if (!file) return;
+      const text = await file.text();
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed && parsed.voyageraEncrypted) {
+          openCustomDialog({
+            title: 'Decrypt Backup File',
+            desc: 'Enter the passphrase used to encrypt this backup:',
+            showInput: true,
+            placeholder: 'Passphrase...',
+            onConfirm: async pass => {
+              try {
+                const decrypted = await decryptPayloadAes(parsed, pass.trim());
+                state = decrypted;
+                await saveState(true);
+                render();
+                showToast('Encrypted vault restored!');
+              } catch (err) {
+                showToast('Wrong passphrase — could not decrypt');
+              }
+            }
+          });
+        } else if (parsed && Array.isArray(parsed.trips)) {
+          state = parsed;
+          await saveState(true);
+          render();
+          showToast('Vault restored successfully!');
+        } else {
+          showToast('Unrecognized backup file format');
+        }
+      } catch (e) {
+        showToast('Invalid JSON file');
       }
-      document.getElementById('doc-preview-modal').classList.remove('hidden');
     }
 
-    function previewImage(title, src) {
-      document.getElementById('doc-preview-title').textContent = title;
-      const dl = document.getElementById('doc-preview-download');
-      dl.href = src;
-      dl.download = title.toLowerCase().replace(/\s+/g, '-') + '.jpg';
-      document.getElementById('doc-preview-body').innerHTML = `<img src="${src}" alt="${escapeHtml(title)}" class="max-h-[72vh] rounded-2xl object-contain" />`;
-      document.getElementById('doc-preview-modal').classList.remove('hidden');
+    function confirmResetAppToBlank() {
+      openCustomDialog({
+        title: 'Reset to Clean Blank Vault?',
+        desc: 'This clears the demo Mexico/Guatemala/Belize trips so you can start fresh before hosting on GitHub. Your PIN and sync settings stay intact.',
+        showInput: false,
+        onConfirm: async () => {
+          const keepCfg = cloneObj(state.securityConfig || {});
+          const keepTravelers = cloneObj(state.travelers || DEFAULT_STATE.travelers);
+          const keepEmergency = cloneObj(state.emergencyContacts || []);
+          state = {
+            activeTripId: 'trip_first',
+            selectedCityId: 'city_first',
+            activeTab: 'itinerary',
+            activeUserId: keepTravelers[0] ? keepTravelers[0].id : 'tr_you',
+            guiStyle: state.guiStyle || 'vintage_postcard',
+            homeCurrency: state.homeCurrency || 'EUR',
+            fxRates: cloneObj(DEFAULT_STATE.fxRates),
+            travelers: keepTravelers,
+            emergencyContacts: keepEmergency,
+            securityConfig: keepCfg,
+            sectionDocs: {},
+            deletedIds: [],
+            queuedMutations: 0,
+            trips: [
+              {
+                id: 'trip_first',
+                name: 'My First Trip',
+                dates: 'Upcoming Dates',
+                currency: '$',
+                currencyCode: 'USD',
+                budgetLimit: 1500,
+                cities: [
+                  {
+                    id: 'city_first',
+                    name: 'First Destination',
+                    dates: 'Day 1 – Day 5',
+                    notes: 'Tap "+ Add Stop" or use the Quick Entry bar above to start planning.',
+                    activities: []
+                  }
+                ],
+                tickets: [],
+                packing: [],
+                guides: []
+              }
+            ]
+          };
+          await saveState();
+          render();
+          showToast('Reset to clean blank vault!');
+        }
+      });
     }
 
-    function closeDocPreview() {
-      document.getElementById('doc-preview-modal').classList.add('hidden');
-    }
-
+    // =========================================================================
+    // 23. MODALS (ADD STAMP / CITY / BOOKING / NEW COUNTRY)
+    // =========================================================================
     function openAddModal() {
       const trip = getActiveTrip();
-      const citySelect = document.getElementById('input-city-id');
-      citySelect.innerHTML = trip.cities.map(c => `<option value="${c.id}" ${c.id === state.selectedCityId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+      const sel = document.getElementById('input-city-id');
+      sel.innerHTML = trip.cities.map(c => `<option value="${c.id}" ${c.id === state.selectedCityId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
       const travBox = document.getElementById('input-travelers-boxes');
       if (travBox) {
         travBox.innerHTML = (state.travelers || []).map(tr => `
@@ -4782,20 +4995,21 @@
     function setAddType(type) {
       document.getElementById('add-entry-type').value = type;
       ['activity', 'city', 'ticket'].forEach(t => {
-        const btn = document.getElementById(`type-btn-${t}`);
-        btn.className = t === type
-          ? 'py-2 rounded-xl text-xs font-extrabold bg-white text-stone-900 shadow-xs'
-          : 'py-2 rounded-xl text-xs font-extrabold text-stone-600';
+        const btn = document.getElementById('type-btn-' + t);
+        if (t === type) {
+          btn.className = 'py-2 rounded-xl text-xs font-extrabold bg-white text-stone-900 shadow-xs';
+        } else {
+          btn.className = 'py-2 rounded-xl text-xs font-extrabold text-stone-600';
+        }
       });
       document.getElementById('field-city-select').classList.toggle('hidden', type !== 'activity');
       document.getElementById('field-category').classList.toggle('hidden', type === 'city');
       document.getElementById('field-dates').classList.toggle('hidden', type === 'activity');
       document.getElementById('field-code').classList.toggle('hidden', type !== 'ticket');
       document.getElementById('field-travelers').classList.toggle('hidden', type === 'city');
-      document.getElementById('field-media').classList.toggle('hidden', type === 'city');
+      document.getElementById('field-media').classList.toggle('hidden', type !== 'activity');
       document.getElementById('field-video').classList.toggle('hidden', type !== 'activity');
-      document.getElementById('label-title').textContent =
-        type === 'city' ? 'City or Region Name' : type === 'ticket' ? 'Flight, Hotel or Pass Title' : 'Place or Stamp Title';
+      document.getElementById('label-title').textContent = type === 'city' ? 'City / Hub Name' : type === 'ticket' ? 'Flight / Hotel / Pass Title' : 'Place or Stamp Title';
     }
 
     async function handleAddSubmit(e) {
@@ -4803,17 +5017,15 @@
       const trip = getActiveTrip();
       const type = document.getElementById('add-entry-type').value;
       const title = document.getElementById('input-title').value.trim();
-      const category = document.getElementById('input-category').value;
+      const note = document.getElementById('input-note').value.trim();
       const price = parseFloat(document.getElementById('input-price').value) || 0;
+      const category = document.getElementById('input-category').value;
       const dates = document.getElementById('input-dates').value.trim();
       const code = document.getElementById('input-code').value.trim();
-      const note = document.getElementById('input-note').value.trim();
-      const file = document.getElementById('input-file').files[0];
-      const videoUrl = document.getElementById('input-video-url').value.trim();
-      const videoCat = document.getElementById('input-video-cat').value;
-      const selectedTravs = [...document.querySelectorAll('input[name="add-trav"]:checked')].map(el => el.value);
-      let fileDataUrl = null;
-      if (file) fileDataUrl = await readFileAsDataUrl(file);
+      const checkedTravs = [...document.querySelectorAll('input[name="add-trav"]:checked')].map(el => el.value);
+      const travelerIds = checkedTravs.length ? checkedTravs : (state.travelers || []).map(t => t.id);
+
+      if (!title) return;
 
       if (type === 'city') {
         const newCity = {
@@ -4826,37 +5038,45 @@
         trip.cities.push(newCity);
         state.selectedCityId = newCity.id;
       } else if (type === 'ticket') {
-        trip.tickets.unshift({
-          id: 't_' + Date.now(),
-          type: category,
+        trip.tickets.push({
+          id: 'tk_' + Date.now(),
+          type: category === 'Flight' || category === 'Transit' || category === 'Hotel' ? category : 'Sightseeing',
           title,
           date: dates || 'Scheduled',
-          code: code || 'CONF-' + Math.floor(1000 + Math.random() * 9000),
+          code: code || 'CONFIRMED',
           price,
           createdBy: state.activeUserId || 'tr_you',
-          travelerIds: selectedTravs
+          travelerIds
         });
-        if (fileDataUrl && file) {
-          const secKey = `${trip.id}_bookings`;
-          if (!state.sectionDocs[secKey]) state.sectionDocs[secKey] = [];
-          state.sectionDocs[secKey].push({ id: 'doc_' + Date.now(), name: file.name, type: file.type, dataUrl: fileDataUrl });
-        }
       } else {
         const cityId = document.getElementById('input-city-id').value;
         const city = trip.cities.find(c => c.id === cityId) || getSelectedCity(trip);
+        let photo = null;
+        const file = document.getElementById('input-file').files[0];
+        if (file && file.type.startsWith('image/')) {
+          photo = await readFileAsDataUrl(file);
+        } else if (file) {
+          const dataUrl = await readFileAsDataUrl(file);
+          const secKey = `${trip.id}_docs`;
+          if (!state.sectionDocs) state.sectionDocs = {};
+          if (!state.sectionDocs[secKey]) state.sectionDocs[secKey] = [];
+          state.sectionDocs[secKey].push({ id: 'doc_' + Date.now(), name: file.name, type: file.type, dataUrl });
+        }
+
+        const vidUrl = document.getElementById('input-video-url').value.trim();
+        const vidCat = document.getElementById('input-video-cat').value;
         const videos = [];
-        if (videoUrl) {
-          const ytId = extractYouTubeId(videoUrl);
+        if (vidUrl) {
+          const ytId = extractYouTubeId(vidUrl);
           videos.push({
             id: 'vid_' + Date.now(),
             title,
-            category: videoCat,
-            url: videoUrl,
-            thumb: ytId
-              ? `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`
-              : 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=900&q=80'
+            category: vidCat,
+            url: vidUrl,
+            thumb: ytId ? `https://img.youtube.com/vi/${ytId}/hqdefault.jpg` : 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=900&q=80'
           });
         }
+
         city.activities.push({
           id: 'act_' + Date.now(),
           title,
@@ -4865,9 +5085,9 @@
           price,
           completed: false,
           createdBy: state.activeUserId || 'tr_you',
-          travelerIds: selectedTravs,
+          travelerIds,
           note,
-          photo: file && file.type.startsWith('image/') ? fileDataUrl : null,
+          photo,
           videos
         });
       }
@@ -4875,7 +5095,7 @@
       closeAddModal();
       await saveState();
       render();
-      showToast('Stamped & saved offline!');
+      showToast('Stamped & saved to vault');
     }
 
     function openNewTripModal() {
@@ -4889,12 +5109,12 @@
     async function handleNewTripSubmit(e) {
       e.preventDefault();
       const name = document.getElementById('new-trip-name').value.trim();
-      const dates = document.getElementById('new-trip-dates').value.trim() || 'Upcoming Journey';
+      const dates = document.getElementById('new-trip-dates').value.trim() || 'Upcoming Dates';
       const currency = document.getElementById('new-trip-currency').value.trim() || '$';
       const cityName = document.getElementById('new-trip-city').value.trim();
       if (!name || !cityName) return;
 
-      const newCityId = 'city_' + Date.now();
+      const cityId = 'city_' + Date.now();
       const newTrip = {
         id: 'trip_' + Date.now(),
         name,
@@ -4902,175 +5122,51 @@
         currency,
         currencyCode: currency === '€' ? 'EUR' : currency === '£' ? 'GBP' : 'USD',
         budgetLimit: 1500,
-        cities: [{ id: newCityId, name: cityName, dates, notes: 'First stop in ' + name, activities: [] }],
+        cities: [{ id: cityId, name: cityName, dates, notes: 'First destination in ' + name, activities: [] }],
         tickets: [],
-        packing: [{ id: 'p_' + Date.now(), text: 'Passport & travel insurance', packed: false, createdBy: state.activeUserId || 'tr_you' }],
+        packing: [],
         guides: []
       };
       state.trips.push(newTrip);
       state.activeTripId = newTrip.id;
-      state.selectedCityId = newCityId;
+      state.selectedCityId = cityId;
+      calSelectedMonthIdx = null;
+      calSelectedDayIso = null;
       closeNewTripModal();
       await saveState();
       render();
-      showToast('Created passport for ' + name);
+      showToast(name + ' passport created & sorted by date!');
     }
 
     // =========================================================================
-    // 23. STORE ANYWHERE: GOOGLE DRIVE, ICLOUD, PIN, AES-256 & 2-WAY MERGE SYNC
-    // =========================================================================
-    async function shareVaultNative() {
-      const jsonStr = JSON.stringify(state, null, 2);
-      const file = new File([jsonStr], 'voyagera-vault.json', { type: 'application/json' });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        try {
-          await navigator.share({
-            title: 'Voyagera Vault Backup',
-            text: 'Save to Google Drive, iCloud Drive, or Files',
-            files: [file]
-          });
-          return;
-        } catch (e) {
-          // Fallback to download
-        }
-      }
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(file);
-      a.download = 'voyagera-vault.json';
-      a.click();
-      showToast('Downloaded voyagera-vault.json — upload to Drive or iCloud anytime');
-    }
-
-    async function linkLocalSyncFolder() {
-      if (!window.showDirectoryPicker) {
-        showToast('Use "Share / Save to Google Drive or iCloud" on mobile browsers.');
-        return;
-      }
-      try {
-        const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-        const fileHandle = await dirHandle.getFileHandle('voyagera-vault.json', { create: true });
-        const writable = await fileHandle.createWritable();
-        await writable.write(JSON.stringify(state, null, 2));
-        await writable.close();
-        showToast('Mirrored voyagera-vault.json to your chosen cloud folder!');
-      } catch (e) {
-        showToast('Folder linking cancelled');
-      }
-    }
-
-    function exportEncryptedVault() {
-      openCustomDialog({
-        title: 'Create AES-256 Encrypted Backup',
-        desc: 'Choose a secret passphrase to encrypt all trips, PINs & passports:',
-        showInput: true,
-        placeholder: 'Enter secret passphrase...',
-        onConfirm: async pass => {
-          if (!pass || pass.trim().length < 4) {
-            showToast('Please enter at least 4 characters');
-            return;
-          }
-          const encrypted = await encryptPayloadAes(JSON.stringify(state), pass.trim());
-          const blob = new Blob([encrypted], { type: 'application/json' });
-          const a = document.createElement('a');
-          a.href = URL.createObjectURL(blob);
-          a.download = 'voyagera-encrypted-vault.json';
-          a.click();
-          showToast('AES-256 Encrypted backup downloaded!');
-        }
-      });
-    }
-
-    function importVaultFile(input) {
-      const file = input.files && input.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = async () => {
-        try {
-          const parsed = JSON.parse(reader.result);
-          if (parsed && parsed.voyageraEncrypted) {
-            openCustomDialog({
-              title: 'Unlock Encrypted Backup',
-              desc: 'Enter the passphrase used to encrypt this backup file:',
-              showInput: true,
-              placeholder: 'Passphrase...',
-              onConfirm: async pass => {
-                try {
-                  const decrypted = await decryptPayloadAes(parsed, pass.trim());
-                  if (decrypted && Array.isArray(decrypted.trips)) {
-                    state = { ...cloneObj(DEFAULT_STATE), ...decrypted };
-                    await saveState(true);
-                    render();
-                    showToast('Encrypted vault restored!');
-                  }
-                } catch (err) {
-                  showToast('Wrong passphrase for encrypted backup');
-                }
-              }
-            });
-          } else if (parsed && Array.isArray(parsed.trips)) {
-            state = { ...cloneObj(DEFAULT_STATE), ...parsed };
-            await saveState(true);
-            render();
-            showToast('Backup restored!');
-          }
-        } catch (err) {
-          showToast('Invalid backup JSON file');
-        }
-      };
-      reader.readAsText(file);
-    }
-
-    async function saveNewPin(e) {
-      e.preventDefault();
-      const val = document.getElementById('new-pin-input').value.trim();
-      if (val.length < 4) return;
-      state.securityConfig.pinHash = await hashPin(val);
-      sessionStorage.setItem('voyagera_unlocked', '1');
-      await saveState();
-      render();
-      showToast('App PIN lock saved!');
-    }
-
-    async function removePin() {
-      state.securityConfig.pinHash = '';
-      sessionStorage.removeItem('voyagera_unlocked');
-      await saveState();
-      render();
-      showToast('App PIN removed');
-    }
-
-    function changeServerMode(mode) {
-      state.securityConfig.serverMode = mode;
-      saveState(true);
-      render();
-    }
-
-    // =========================================================================
-    // 24. MASTER RENDER & WINDOW ONLOAD
+    // 24. MAIN RENDER ORCHESTRATOR & STARTUP
     // =========================================================================
     function render() {
-      const trip = getActiveTrip();
+      sortTripsByDate();
       renderHeaderAndNav();
       updateLiveSyncBadge('Synced', false);
-
+      const trip = getActiveTrip();
       const main = document.getElementById('main-content');
-      let html = '';
-      switch (state.activeTab) {
-        case 'itinerary': html = renderItineraryView(trip); break;
-        case 'calendar': html = renderCalendarView(trip); break;
-        case 'bookings': html = renderBookingsView(trip); break;
-        case 'prep_budget': html = renderPrepBudgetView(trip); break;
-        case 'story': html = renderStoryBlogView(trip); break;
-        case 'vault_share': html = renderVaultShareView(trip); break;
-        default: html = renderItineraryView(trip);
-      }
-      main.innerHTML = `<div class="animate-fade">${html}</div>`;
+      if (!trip || !main) return;
+
+      let viewHtml = '';
+      if (state.activeTab === 'story') viewHtml = renderStoryBlogView(trip);
+      else if (state.activeTab === 'calendar') viewHtml = renderCalendarView(trip);
+      else if (state.activeTab === 'bookings') viewHtml = renderBookingsView(trip);
+      else if (state.activeTab === 'prep_budget') viewHtml = renderPrepBudgetView(trip);
+      else if (state.activeTab === 'vault_share') viewHtml = renderVaultShareView(trip);
+      else viewHtml = renderItineraryView(trip);
+
+      main.innerHTML = `<div class="animate-fade">${viewHtml}</div>`;
     }
 
     window.addEventListener('online', () => {
-      const trip = getActiveTrip();
-      refreshCityWeather(getSelectedCity(trip));
-      syncNowBidirectional(true);
+      const city = getSelectedCity(getActiveTrip());
+      refreshCityWeather(city);
+      if (state.securityConfig && state.securityConfig.serverMode !== 'local_only') {
+        showToast('Back online — merging & syncing...');
+        syncNowBidirectional(true, false);
+      }
     });
 
     window.addEventListener('offline', () => {
@@ -5079,34 +5175,44 @@
         pill.classList.add('hidden');
         pill.classList.remove('flex');
       }
-      updateLiveSyncBadge('Offline', false);
+      showToast('Offline mode — all changes save on your device');
     });
 
-    setInterval(() => {
-      if (document.visibilityState === 'visible' && navigator.onLine && !state.isGuestSharedView && state.securityConfig && state.securityConfig.serverMode !== 'local_only' && !isUserActivelyEditing()) {
-        syncNowBidirectional(true);
-      }
-    }, 300000);
-
     window.onload = async function () {
-      registerOfflineAppShell();
-      const saved = await readDbValue(STATE_KEY);
-      if (saved && Array.isArray(saved.trips) && saved.trips.length > 0) {
-        const savedSec = saved.securityConfig || {};
-        state = {
-          ...cloneObj(DEFAULT_STATE),
-          ...saved,
-          securityConfig: { ...DEFAULT_STATE.securityConfig, ...savedSec }
-        };
-      } else {
+      try {
+        registerOfflineAppShell();
+        const saved = await readDbValue(STATE_KEY);
+        if (saved && Array.isArray(saved.trips) && saved.trips.length > 0) {
+          state = saved;
+          if (!state.guiStyle) state.guiStyle = 'vintage_postcard';
+          if (!state.homeCurrency) state.homeCurrency = 'EUR';
+          if (!Array.isArray(state.travelers)) state.travelers = cloneObj(DEFAULT_STATE.travelers);
+          if (!Array.isArray(state.emergencyContacts)) {
+            state.emergencyContacts = cloneObj(DEFAULT_STATE.emergencyContacts);
+          }
+          if (!Array.isArray(state.deletedIds)) state.deletedIds = [];
+          const validIds = NAV_MODULES.map(m => m.id);
+          if (!validIds.includes(state.activeTab)) state.activeTab = 'itinerary';
+        } else {
+          state = cloneObj(DEFAULT_STATE);
+          await writeDbValue(STATE_KEY, state);
+        }
+        checkIncomingShareLink();
+        checkPinGate();
+        render();
+
+        if (!state.isGuestSharedView && state.securityConfig && state.securityConfig.serverMode !== 'local_only' && state.securityConfig.autoPullOnOpen !== false && navigator.onLine) {
+          setTimeout(() => syncNowBidirectional(true, false), 600);
+        }
+
+        setInterval(() => {
+          if (!state.isGuestSharedView && state.securityConfig && state.securityConfig.serverMode !== 'local_only' && navigator.onLine) {
+            syncNowBidirectional(true, false);
+          }
+        }, 300000);
+      } catch (err) {
         state = cloneObj(DEFAULT_STATE);
-        await writeDbValue(STATE_KEY, state);
-      }
-      checkIncomingShareLink();
-      checkPinGate();
-      render();
-      if (navigator.onLine && !state.isGuestSharedView && state.securityConfig && state.securityConfig.autoPullOnOpen !== false && state.securityConfig.serverMode !== 'local_only') {
-        syncNowBidirectional(true, true);
+        render();
       }
     };
   </script>
