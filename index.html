@@ -237,6 +237,10 @@
                 <span id="header-weather-icon">☀️</span>
                 <span id="header-weather-text" class="truncate">24°C • Mexico City</span>
               </div>
+              <button type="button" id="live-sync-pill" onclick="syncNowBidirectional(false)" title="Tap to merge & sync with partner now" class="hidden items-center gap-1.5 bg-emerald-950/45 hover:bg-emerald-950/65 px-2.5 py-1 rounded-full text-[10px] font-extrabold text-emerald-100 transition shrink-0">
+                <i id="live-sync-icon" class="fa-solid fa-rotate"></i>
+                <span id="live-sync-text">Synced</span>
+              </button>
               <span id="queued-badge" class="hidden text-[10px] font-extrabold bg-stone-950/40 px-2.5 py-0.5 rounded-full">0 pending</span>
             </div>
 
@@ -940,6 +944,7 @@
         restUrl: ''
       },
       sectionDocs: {},
+      deletedIds: [],
       queuedMutations: 0,
       lastSyncedAt: '',
       isGuestSharedView: false,
@@ -1372,7 +1377,7 @@
       }
       if (!skipCloudPush && !state.isGuestSharedView && state.securityConfig && state.securityConfig.serverMode !== 'local_only') {
         if (navigator.onLine) {
-          pushToConfiguredServer(true);
+          syncNowBidirectional(true);
         } else {
           state.queuedMutations = (state.queuedMutations || 0) + 1;
           await writeDbValue(STATE_KEY, state);
@@ -1381,15 +1386,36 @@
       }
     }
 
+    function markDeletedId(id) {
+      if (!id) return;
+      if (!Array.isArray(state.deletedIds)) state.deletedIds = [];
+      if (!state.deletedIds.includes(id)) {
+        state.deletedIds.push(id);
+        if (state.deletedIds.length > 400) state.deletedIds = state.deletedIds.slice(-400);
+      }
+    }
+
     function updateQueuedBadge() {
       const badge = document.getElementById('queued-badge');
-      if (!badge) return;
-      const q = state.queuedMutations || 0;
-      if (q > 0) {
-        badge.textContent = `${q} pending sync`;
-        badge.classList.remove('hidden');
-      } else {
-        badge.classList.add('hidden');
+      if (badge) {
+        const q = state.queuedMutations || 0;
+        if (q > 0) {
+          badge.textContent = `${q} pending sync`;
+          badge.classList.remove('hidden');
+        } else {
+          badge.classList.add('hidden');
+        }
+      }
+      const syncPill = document.getElementById('live-sync-pill');
+      const syncText = document.getElementById('live-sync-text');
+      if (syncPill && state.securityConfig) {
+        if (!state.isGuestSharedView && state.securityConfig.serverMode !== 'local_only') {
+          syncPill.classList.remove('hidden');
+          syncPill.classList.add('inline-flex');
+          if (syncText) syncText.textContent = navigator.onLine ? '2-Way Sync' : 'Offline';
+        } else {
+          syncPill.classList.add('hidden');
+        }
       }
     }
 
@@ -1767,6 +1793,7 @@
       const act = (city.activities || []).find(a => a.id === actId);
       if (!act) return;
       act.done = !act.done;
+      act.updatedAt = Date.now();
       saveState();
       render();
     }
@@ -1789,6 +1816,7 @@
       const trip = getActiveTrip();
       const city = (trip.cities || []).find(c => c.id === cityId);
       if (!city) return;
+      markDeletedId(actId);
       city.activities = (city.activities || []).filter(a => a.id !== actId);
       saveState();
       render();
@@ -2090,6 +2118,7 @@
 
     function deleteGuideItem(guideId) {
       const trip = getActiveTrip();
+      markDeletedId(guideId);
       trip.guides = (trip.guides || []).filter(g => g.id !== guideId);
       saveState();
       render();
@@ -2248,30 +2277,31 @@
 
       const allTravIds = (state.travelers || []).map(t => t.id);
       const authorId = state.activeUserId || 'tr_you';
+      const nowTs = Date.now();
       input.value = '';
 
       if (target === 'flight' || target === 'hotel') {
         const type = target === 'flight' ? 'Flight' : 'Hotel';
-        const newTk = { id: 'tk_' + Date.now(), type, title: cleanTitle, date: dateStr, code: '', price, involvedTravelers: allTravIds, addedBy: authorId, note: '' };
+        const newTk = { id: 'tk_' + nowTs, type, title: cleanTitle, date: dateStr, code: '', price, involvedTravelers: allTravIds, addedBy: authorId, updatedAt: nowTs, note: '' };
         trip.tickets.unshift(newTk);
         saveState();
         render();
         showToast(`Added to Bookings (${type})!`, 'Edit / Classify', () => openEditItemModal('ticket', trip.id, newTk.id));
       } else if (target === 'pack') {
-        const newPk = { id: 'pk_' + Date.now(), name: cleanTitle, packed: false, addedBy: authorId };
+        const newPk = { id: 'pk_' + nowTs, name: cleanTitle, packed: false, addedBy: authorId, updatedAt: nowTs };
         trip.packing.unshift(newPk);
         saveState();
         render();
         showToast(`Added "${cleanTitle}" to Packing!`, 'Edit / Classify', () => openEditItemModal('packing', trip.id, newPk.id));
       } else if (target === 'food') {
-        const newGd = { id: 'gd_' + Date.now(), category: 'Food & Where to Eat', title: cleanTitle, addedBy: authorId, content: price > 0 ? `Est. ${formatCurrency(price, trip.currency)}` : 'Added via Quick Entry' };
+        const newGd = { id: 'gd_' + nowTs, category: 'Food & Where to Eat', title: cleanTitle, addedBy: authorId, updatedAt: nowTs, content: price > 0 ? `Est. ${formatCurrency(price, trip.currency)}` : 'Added via Quick Entry' };
         trip.guides.unshift(newGd);
         saveState();
         render();
         showToast(`Saved "${cleanTitle}" to Food & Local Tips!`, 'Edit / Classify', () => openEditItemModal('guide', trip.id, newGd.id));
       } else {
         const newAct = {
-          id: 'act_' + Date.now(),
+          id: 'act_' + nowTs,
           title: cleanTitle,
           category: 'Sightseeing',
           time: dateStr,
@@ -2279,6 +2309,7 @@
           done: false,
           involvedTravelers: allTravIds,
           addedBy: authorId,
+          updatedAt: nowTs,
           note: '',
           photo: '',
           videos: []
@@ -2742,6 +2773,7 @@
 
     function deleteTicketItem(tkId) {
       const trip = getActiveTrip();
+      markDeletedId(tkId);
       trip.tickets = (trip.tickets || []).filter(t => t.id !== tkId);
       saveState();
       render();
@@ -2849,6 +2881,7 @@
       const pk = (trip.packing || []).find(p => p.id === pkId);
       if (pk) {
         pk.packed = !pk.packed;
+        pk.updatedAt = Date.now();
         saveState();
         render();
       }
@@ -2868,6 +2901,7 @@
 
     function deletePackingItem(pkId) {
       const trip = getActiveTrip();
+      markDeletedId(pkId);
       trip.packing = (trip.packing || []).filter(p => p.id !== pkId);
       saveState();
       render();
@@ -3162,6 +3196,7 @@
     }
 
     function deleteEmergencyPerson(emId) {
+      markDeletedId(emId);
       state.emergencyContacts = (state.emergencyContacts || []).filter(x => x.id !== emId);
       saveState();
       render();
@@ -3180,6 +3215,7 @@
     }
 
     function deleteTravelerPerson(trId) {
+      markDeletedId(trId);
       state.travelers = (state.travelers || []).filter(t => t.id !== trId);
       saveState();
       render();
@@ -3227,6 +3263,21 @@
     function checkIncomingShareLink() {
       try {
         const hash = window.location.hash || '';
+        if (hash.startsWith('#voyagera_pair=')) {
+          const b64 = hash.replace('#voyagera_pair=', '');
+          const pairInfo = JSON.parse(decodeURIComponent(escape(atob(b64))));
+          if (pairInfo && pairInfo.config) {
+            state.securityConfig = { ...state.securityConfig, ...pairInfo.config, autoPullOnOpen: true };
+            if (pairInfo.forTravelerId) {
+              state.activeUserId = pairInfo.forTravelerId;
+            }
+            writeDbValue(STATE_KEY, state);
+            history.replaceState(null, '', window.location.pathname + window.location.search);
+            const who = pairInfo.forTravelerName ? ` as ${pairInfo.forTravelerName}` : '';
+            showToast(`Paired to Shared Vault${who}! Pulling latest trips...`);
+          }
+          return;
+        }
         if (hash.startsWith('#voyagera_room=')) {
           const b64 = hash.replace('#voyagera_room=', '');
           const roomInfo = JSON.parse(decodeURIComponent(escape(atob(b64))));
@@ -3235,6 +3286,7 @@
             state.securityConfig.roomId = roomInfo.roomId;
             state.securityConfig.roomSecret = roomInfo.roomSecret;
             state.securityConfig.autoPullOnOpen = true;
+            writeDbValue(STATE_KEY, state);
             history.replaceState(null, '', window.location.pathname + window.location.search);
             showToast('Connected to Shared Trip Room! Syncing latest plan...');
           }
@@ -3242,42 +3294,60 @@
         }
         if (!hash.startsWith('#voyagera_share=')) return;
         const b64 = hash.replace('#voyagera_share=', '');
-        const parsed = JSON.parse(decodeURIComponent(escape(atob(b64))));
-        if (parsed && parsed.trip) {
-          state.trips = [parsed.trip];
-          state.activeTripId = parsed.trip.id;
-          state.selectedCityId = parsed.trip.cities && parsed.trip.cities[0] ? parsed.trip.cities[0].id : '';
+        const payload = JSON.parse(decodeURIComponent(escape(atob(b64))));
+        if (payload && payload.trip) {
           state.isGuestSharedView = true;
-          state.guestBannerText = `Personalized Guest View for ${parsed.sharedForName} • Vault & Source Code Locked`;
-          if (state.activeTab === 'vault_share') state.activeTab = 'itinerary';
+          state.guestBannerText = `Shared Trip View for ${payload.sharedForName || 'Guest'} • ${payload.trip.name}`;
+          state.trips = [payload.trip];
+          state.activeTripId = payload.trip.id;
+          state.selectedCityId = (payload.trip.cities && payload.trip.cities[0] && payload.trip.cities[0].id) || '';
+          state.activeTab = 'itinerary';
         }
       } catch (e) {
-        // Ignore malformed hash
+        // Ignore malformed share hash
       }
     }
 
     async function dismissSharedBanner() {
       history.replaceState(null, '', window.location.pathname + window.location.search);
       const saved = await readDbValue(STATE_KEY);
-      state = saved && saved.trips ? saved : cloneObj(DEFAULT_STATE);
-      state.isGuestSharedView = false;
+      if (saved && Array.isArray(saved.trips) && saved.trips.length > 0) {
+        state = {
+          ...cloneObj(DEFAULT_STATE),
+          ...saved,
+          isGuestSharedView: false,
+          guestBannerText: '',
+          securityConfig: { ...DEFAULT_STATE.securityConfig, ...(saved.securityConfig || {}) }
+        };
+      } else {
+        state = cloneObj(DEFAULT_STATE);
+      }
       render();
+      showToast('Returned to your full private vault');
     }
 
     function renderVaultShareView() {
-      const cfg = state.securityConfig || {};
       const trip = getActiveTrip();
       const travelers = state.travelers || [];
-      const walletList = state.emergencyContacts || [];
+      const cfg = state.securityConfig || {};
+      const contacts = state.emergencyContacts || [];
+      const maskVal = val => (walletRevealed ? escapeHtml(val || '—') : '••••••••••');
 
       const subTabs = `
         <div class="flex flex-wrap gap-2">
-          <button type="button" onclick="setVaultSubTab('sync_security')" class="px-4 py-2 rounded-full text-xs font-extrabold ${vaultSubTab === 'sync_security' ? 'bg-stone-900 text-white' : 'bg-[#fffdf9] text-stone-700 border border-stone-200'}"><i class="fa-solid fa-cloud-arrow-up mr-1.5"></i>1. Device Setup & Sync</button>
-          <button type="button" onclick="setVaultSubTab('emergency')" class="px-4 py-2 rounded-full text-xs font-extrabold ${vaultSubTab === 'emergency' ? 'bg-stone-900 text-white' : 'bg-[#fffdf9] text-stone-700 border border-stone-200'}"><i class="fa-solid fa-passport mr-1.5"></i>2. Family Emergency Wallet (${walletList.length})</button>
-          <button type="button" onclick="setVaultSubTab('travelers')" class="px-4 py-2 rounded-full text-xs font-extrabold ${vaultSubTab === 'travelers' ? 'bg-stone-900 text-white' : 'bg-[#fffdf9] text-stone-700 border border-stone-200'}"><i class="fa-solid fa-users mr-1.5"></i>3. Share with Travelers</button>
+          <button type="button" onclick="setVaultSubTab('sync_security')" class="px-4 py-2 rounded-full text-xs font-extrabold transition ${vaultSubTab === 'sync_security' ? 'bg-stone-900 text-white shadow-xs' : 'bg-[#fffdf9] text-stone-700 border border-stone-200'}">
+            <i class="fa-solid fa-cloud-arrow-up mr-1.5 text-amber-400"></i>1. Device Setup & Sync
+          </button>
+          <button type="button" onclick="setVaultSubTab('emergency')" class="px-4 py-2 rounded-full text-xs font-extrabold transition ${vaultSubTab === 'emergency' ? 'bg-stone-900 text-white shadow-xs' : 'bg-[#fffdf9] text-stone-700 border border-stone-200'}">
+            <i class="fa-solid fa-passport mr-1.5 text-rose-400"></i>2. Family Emergency Wallet
+          </button>
+          <button type="button" onclick="setVaultSubTab('travelers')" class="px-4 py-2 rounded-full text-xs font-extrabold transition ${vaultSubTab === 'travelers' ? 'bg-stone-900 text-white shadow-xs' : 'bg-[#fffdf9] text-stone-700 border border-stone-200'}">
+            <i class="fa-solid fa-users mr-1.5 text-emerald-400"></i>3. Share with Travelers
+          </button>
         </div>
       `;
 
+      // Sub-Tab 2: Multi-Person Family Emergency Wallet & Passports
       if (vaultSubTab === 'emergency') {
         return `
           <div class="space-y-4 animate-fade">
@@ -3285,147 +3355,155 @@
             <div class="bg-[#fffdf9] rounded-3xl p-5 border border-stone-200 space-y-4">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <span class="text-[10px] font-extrabold uppercase tracking-wider text-rose-600">Multi-Person Offline Quick-Access</span>
+                  <span class="text-[10px] font-extrabold uppercase tracking-wider text-rose-600">Offline Quick-Access • Family & Group Ready</span>
                   <h2 class="font-serif-blog text-2xl font-bold text-stone-900">Family Emergency & Insurance Wallet</h2>
-                  <p class="text-xs text-stone-500">Store passports, blood types & travel insurance for yourself, your spouse, and family members.</p>
+                  <p class="text-xs text-stone-500 mt-0.5">Store passport numbers, blood types, and travel insurance for yourself, your partner, and family members.</p>
                 </div>
                 <div class="flex items-center gap-2">
-                  <button type="button" onclick="toggleWalletReveal()" class="px-3.5 py-2 rounded-2xl bg-stone-100 hover:bg-stone-200 text-stone-900 text-xs font-extrabold">
-                    <i class="fa-solid ${walletRevealed ? 'fa-eye-slash' : 'fa-eye'} mr-1"></i>${walletRevealed ? 'Mask All' : 'Reveal All'}
+                  <button type="button" onclick="toggleWalletReveal()" class="px-3.5 py-2 rounded-2xl bg-stone-900 text-white text-xs font-extrabold">
+                    <i class="fa-solid ${walletRevealed ? 'fa-eye-slash' : 'fa-eye'} mr-1.5"></i>${walletRevealed ? 'Mask All' : 'Reveal Details'}
                   </button>
-                  <button type="button" onclick="toggleInlineEmergencyForm()" class="px-4 py-2 rounded-2xl bg-gradient-to-r from-rose-500 to-orange-500 text-white text-xs font-extrabold">+ Add Person</button>
+                  <button type="button" onclick="toggleInlineEmergencyForm()" class="px-3.5 py-2 rounded-2xl bg-gradient-to-r from-rose-500 to-orange-500 text-white text-xs font-extrabold">
+                    + Add Person
+                  </button>
                 </div>
               </div>
 
               ${showInlineEmergencyForm ? `
                 <form onsubmit="addEmergencyPerson(event)" class="bg-stone-50 p-4 rounded-2xl border border-stone-200 space-y-3">
-                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    <input id="em-holder-inp" type="text" required placeholder="Full Name (e.g. Spouse / Child)" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold" />
-                    <input id="em-rel-inp" type="text" placeholder="Relation (e.g. Spouse, Child)" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold" />
-                    <input id="em-blood-inp" type="text" placeholder="Blood Type / Allergies (e.g. O+)" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold" />
+                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <input id="em-holder-inp" type="text" required placeholder="Full Name (e.g. Maya)" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold outline-none" />
+                    <input id="em-rel-inp" type="text" placeholder="Relation (e.g. Spouse, Child)" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold outline-none" />
+                    <input id="em-blood-inp" type="text" placeholder="Blood Type / Allergy (e.g. O+)" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold outline-none" />
                   </div>
-                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <input id="em-pass-inp" type="text" placeholder="Passport Number" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold" />
-                    <input id="em-exp-inp" type="text" placeholder="Passport Expiry (YYYY-MM-DD)" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold" />
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <input id="em-pass-inp" type="text" placeholder="Passport Number" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold outline-none" />
+                    <input id="em-exp-inp" type="text" placeholder="Passport Expiry (YYYY-MM-DD)" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold outline-none" />
+                    <input id="em-ins-inp" type="text" placeholder="Travel Insurance Provider" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold outline-none" />
+                    <input id="em-pol-inp" type="text" placeholder="Policy Number" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold outline-none" />
                   </div>
-                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    <input id="em-ins-inp" type="text" placeholder="Insurance Provider" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold" />
-                    <input id="em-pol-inp" type="text" placeholder="Policy Number" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold" />
-                    <input id="em-phone-inp" type="text" placeholder="24/7 Emergency Phone" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold" />
-                  </div>
+                  <input id="em-phone-inp" type="text" placeholder="24/7 Emergency Assist Phone (+49 ...)" class="w-full bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold outline-none" />
                   <div class="flex justify-end gap-2">
-                    <button type="button" onclick="toggleInlineEmergencyForm()" class="px-3 py-1.5 rounded-xl bg-stone-200 text-stone-700 text-xs font-bold">Cancel</button>
-                    <button type="submit" class="px-4 py-1.5 rounded-xl bg-stone-900 text-white text-xs font-extrabold">Save Person</button>
+                    <button type="button" onclick="toggleInlineEmergencyForm()" class="px-3.5 py-2 rounded-xl bg-stone-200 text-stone-700 text-xs font-bold">Cancel</button>
+                    <button type="submit" class="px-4 py-2 rounded-xl bg-stone-900 text-white text-xs font-extrabold">Save Person</button>
                   </div>
                 </form>
               ` : ''}
 
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                ${walletList.map(person => `
+              <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                ${contacts.map(c => `
                   <div class="p-4 rounded-2xl bg-white border border-stone-200 space-y-3 shadow-2xs">
-                    <div class="flex items-start justify-between gap-2 border-b border-stone-100 pb-2">
+                    <div class="flex items-start justify-between gap-2">
                       <div>
-                        <span class="text-[10px] font-extrabold uppercase tracking-wider text-orange-600">${escapeHtml(person.relation || 'Traveler')} ${person.bloodType ? `• Blood ${escapeHtml(person.bloodType)}` : ''}</span>
-                        <h3 class="text-base font-extrabold text-stone-900">${escapeHtml(person.holderName)}</h3>
+                        <span class="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-extrabold uppercase">${escapeHtml(c.relation || 'Traveler')}</span>
+                        <h3 class="text-base font-extrabold text-stone-900 mt-1">${escapeHtml(c.holderName)}</h3>
                       </div>
-                      ${walletList.length > 1 ? `<button type="button" onclick="deleteEmergencyPerson('${person.id}')" class="text-stone-400 hover:text-rose-600 text-xs"><i class="fa-solid fa-trash"></i></button>` : ''}
+                      <button type="button" onclick="deleteEmergencyPerson('${c.id}')" class="text-stone-400 hover:text-rose-600 text-xs"><i class="fa-solid fa-trash"></i></button>
                     </div>
                     <div class="grid grid-cols-2 gap-2 text-xs">
                       <div class="p-2.5 rounded-xl bg-stone-50">
                         <span class="text-[9px] font-extrabold uppercase text-stone-400 block">Passport #</span>
-                        <span class="font-mono font-extrabold text-stone-900">${walletRevealed ? escapeHtml(person.passport || '—') : '••••••••••'}</span>
+                        <span class="font-mono font-extrabold text-stone-900">${maskVal(c.passport)}</span>
                       </div>
                       <div class="p-2.5 rounded-xl bg-stone-50">
-                        <span class="text-[9px] font-extrabold uppercase text-stone-400 block">Expiry Date</span>
-                        <span class="font-mono font-extrabold text-stone-900">${walletRevealed ? escapeHtml(person.expiry || '—') : '••••-••-••'}</span>
+                        <span class="text-[9px] font-extrabold uppercase text-stone-400 block">Expiry / Blood</span>
+                        <span class="font-bold text-stone-800">${maskVal(c.expiry)} • ${escapeHtml(c.bloodType || '—')}</span>
                       </div>
                       <div class="p-2.5 rounded-xl bg-stone-50">
                         <span class="text-[9px] font-extrabold uppercase text-stone-400 block">Insurance & Policy</span>
-                        <span class="font-bold text-stone-900 block truncate">${walletRevealed ? escapeHtml(`${person.insurance || ''} • ${person.policy || ''}`) : '••••••••••'}</span>
+                        <span class="font-bold text-stone-800 block truncate">${escapeHtml(c.insurance || '—')}</span>
+                        <span class="font-mono text-[11px] text-emerald-700 font-bold">${maskVal(c.policy)}</span>
                       </div>
-                      <div class="p-2.5 rounded-xl bg-rose-50/70">
-                        <span class="text-[9px] font-extrabold uppercase text-rose-600 block">24/7 Emergency Phone</span>
-                        <span class="font-mono font-extrabold text-rose-900">${walletRevealed ? escapeHtml(person.phone || '—') : '••••••••••'}</span>
+                      <div class="p-2.5 rounded-xl bg-rose-50 border border-rose-200/70">
+                        <span class="text-[9px] font-extrabold uppercase text-rose-600 block">24/7 Emergency Assist</span>
+                        <span class="font-mono font-extrabold text-rose-900">${maskVal(c.phone)}</span>
                       </div>
                     </div>
                   </div>
-                `).join('')}
+                `).join('') || `<p class="text-xs text-stone-400 col-span-2">No emergency cards added yet. Click "+ Add Person" above.</p>`}
               </div>
             </div>
-            ${renderSectionDocsStrip('passports_vault', 'Scanned Passports, Visas & Insurance PDFs')}
+
+            ${renderSectionDocsStrip('emergency_passports', 'Passports, Visas & Insurance PDFs')}
           </div>
         `;
       }
 
+      // Sub-Tab 1: Device Setup, Automatic Sync, PIN Lock & Clean-Slate Reset
       if (vaultSubTab === 'sync_security') {
         return `
           <div class="space-y-4 animate-fade">
             ${subTabs}
 
-            <!-- Step 1: Easiest Zero-Account Live Sync (Laptop <-> Phone <-> Partner) -->
+            <!-- Step 1: Automatic Anywhere Sync -->
             <div class="bg-[#fffdf9] rounded-3xl p-5 border border-stone-200 space-y-4">
               <div class="flex flex-wrap items-start justify-between gap-2">
                 <div>
-                  <span class="text-[10px] font-extrabold uppercase tracking-wider text-emerald-700">Step 1 • Zero-Account Laptop ↔ Phone & Partner Sync</span>
-                  <h2 class="font-serif-blog text-2xl font-bold text-stone-900">Easy Shared Trip Room & Cloud Sync</h2>
-                  <p class="text-xs text-stone-500 mt-0.5">No GitHub or Google Drive developer setup needed. Create an encrypted Shared Room below and send the 1-tap invite link to your partner and your laptop so everyone sees live updates.</p>
+                  <span class="text-[10px] font-extrabold uppercase tracking-wider text-emerald-700">Step 1 • Laptop ↔ Phone & Partner Anywhere Sync</span>
+                  <h2 class="font-serif-blog text-2xl font-bold text-stone-900">Automatic Cloud & Device Sync</h2>
+                  <p class="text-xs text-stone-500 mt-0.5">Everything saves offline on your device first. Connect your Private GitHub Data Vault or a 1-Click Shared Room so both phones merge updates automatically.</p>
                 </div>
-                ${state.lastSyncedAt ? `<span class="px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-extrabold">Last synced: ${escapeHtml(state.lastSyncedAt)}</span>` : ''}
+                ${cfg.lastSyncedAt ? `<span class="px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-extrabold">Last synced: ${escapeHtml(cfg.lastSyncedAt)}</span>` : ''}
               </div>
 
-              <!-- Highlighted 1-Click Shared Trip Room Box -->
-              <div class="bg-gradient-to-br from-emerald-50/90 via-amber-50/60 to-orange-50/70 rounded-2xl p-4 border border-emerald-200 space-y-3">
+              <!-- 1-Click Encrypted Partner & Device Sync Room (Zero Accounts Needed) -->
+              <div class="bg-emerald-50/70 rounded-2xl p-4 border border-emerald-200 space-y-3">
                 <div class="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <span class="px-2.5 py-0.5 rounded-full bg-emerald-700 text-white text-[10px] font-extrabold uppercase">Easiest • Works on Any Phone & Laptop</span>
-                    <h3 class="font-serif-blog text-lg font-bold text-stone-900 mt-1">1-Click Encrypted Partner & Device Sync Room</h3>
+                    <span class="text-[10px] font-extrabold uppercase tracking-wider text-emerald-800">Zero-Account Option • Works on Any Phone & Laptop</span>
+                    <h3 class="text-sm font-extrabold text-stone-900">1-Click Encrypted Partner & Device Sync Room</h3>
+                    <p class="text-[11px] text-stone-600 mt-0.5">Create a private AES-256 encrypted room with one tap and send the link to your partner or laptop — no GitHub login needed on their phone.</p>
                   </div>
-                  ${cfg.serverMode === 'shared_room' && cfg.roomId ? `<span class="px-3 py-1 rounded-full bg-white border border-emerald-300 text-emerald-900 text-[11px] font-extrabold"><i class="fa-solid fa-circle-check text-emerald-600 mr-1"></i>Room Active</span>` : ''}
+                  ${cfg.serverMode === 'shared_room' && cfg.roomId ? `<span class="px-2.5 py-1 rounded-full bg-emerald-700 text-white text-[10px] font-extrabold">✓ Room Active</span>` : ''}
                 </div>
 
                 ${cfg.serverMode === 'shared_room' && cfg.roomId ? `
-                  <p class="text-xs text-stone-700">Your trips are encrypted on-device with <strong>AES-256</strong> and synced automatically every 30 seconds. Send this link to your partner or open it on your laptop to sync together:</p>
                   <div class="flex flex-wrap items-center gap-2">
-                    <button type="button" onclick="copySharedRoomInviteLink()" class="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-rose-500 to-orange-500 text-white text-xs font-extrabold shadow-xs"><i class="fa-solid fa-link mr-1.5"></i>Copy Partner & Laptop Sync Link</button>
-                    <button type="button" onclick="pushToConfiguredServer(false)" class="px-3.5 py-2.5 rounded-2xl bg-stone-900 text-white text-xs font-extrabold"><i class="fa-solid fa-rotate mr-1"></i>Sync Now</button>
-                    <button type="button" onclick="pullFromConfiguredServer(false)" class="px-3.5 py-2.5 rounded-2xl bg-white border border-stone-200 text-stone-800 text-xs font-extrabold"><i class="fa-solid fa-cloud-arrow-down mr-1"></i>Pull Partner Updates</button>
-                    <button type="button" onclick="disconnectSharedRoom()" class="px-3 py-2 rounded-2xl text-rose-700 text-xs font-extrabold hover:bg-rose-50">Disconnect Room</button>
+                    <button type="button" onclick="copySharedRoomInviteLink()" class="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-rose-500 to-orange-500 text-white text-xs font-extrabold shadow-2xs">
+                      <i class="fa-solid fa-link mr-1.5"></i>Copy Partner & Laptop Sync Link
+                    </button>
+                    <button type="button" onclick="syncNowBidirectional(false)" class="px-4 py-2.5 rounded-2xl bg-stone-900 text-white text-xs font-extrabold">
+                      <i class="fa-solid fa-rotate mr-1.5 text-amber-300"></i>Merge & Sync Both Phones Now
+                    </button>
+                    <button type="button" onclick="disconnectSharedRoom()" class="px-3 py-2 rounded-2xl bg-white border border-stone-200 text-stone-600 text-xs font-bold">
+                      Disconnect Room
+                    </button>
                   </div>
                 ` : `
-                  <p class="text-xs text-stone-600">Pick a secret room passcode (e.g. <code>mexico2026</code>). Your data is locked with AES-256 encryption before leaving your device.</p>
-                  <div class="flex flex-wrap items-center gap-2">
-                    <input id="new-room-secret" type="text" placeholder="Choose secret passcode (e.g. ourtrip26)" class="bg-white border border-stone-200 rounded-xl px-3.5 py-2.5 text-xs font-bold outline-none flex-1 min-w-[200px]" />
-                    <button type="button" onclick="createEncryptedSharedRoom()" class="px-5 py-2.5 rounded-2xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-extrabold shadow-xs">
-                      <i class="fa-solid fa-wand-magic-sparkles mr-1.5"></i>Create Shared Sync Room
+                  <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    <input id="new-room-secret" type="text" placeholder="Choose secret room passcode (e.g. family26)" class="flex-1 bg-white border border-emerald-300 rounded-xl px-3.5 py-2.5 text-xs font-bold outline-none" />
+                    <button type="button" onclick="createEncryptedSharedRoom()" class="px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-extrabold shadow-2xs shrink-0">
+                      Create Shared Sync Room
                     </button>
                   </div>
                 `}
               </div>
 
-              <!-- Alternative Storage / Advanced Server Options -->
+              <!-- Alternative Storage: Private GitHub Data Vault, WebDAV, REST -->
               <div class="bg-stone-50 rounded-2xl p-4 border border-stone-200 space-y-3">
                 <div class="flex flex-wrap items-center justify-between gap-2">
-                  <label class="text-xs font-extrabold text-stone-800">Alternative Storage / Advanced Server Options:</label>
+                  <span class="text-xs font-extrabold text-stone-800">Connect Private GitHub Data Vault or Custom Server:</span>
                   <label class="inline-flex items-center gap-1.5 text-xs font-bold text-stone-700 cursor-pointer">
                     <input type="checkbox" ${cfg.autoPullOnOpen !== false ? 'checked' : ''} onchange="toggleAutoPullOnOpen(this.checked)" class="accent-emerald-600" />
                     <span>Auto-Pull latest data when opening app</span>
                   </label>
                 </div>
-                <select onchange="updateServerMode(this.value)" class="w-full bg-white border border-stone-200 rounded-xl px-3 py-2.5 text-xs font-extrabold">
-                  <option value="shared_room" ${cfg.serverMode === 'shared_room' ? 'selected' : ''}>1-Click Encrypted Shared Trip Room (Recommended • No Account Needed)</option>
-                  <option value="local_only" ${cfg.serverMode === 'local_only' ? 'selected' : ''}>Device Local Vault + Google Drive / iCloud File</option>
-                  <option value="github" ${cfg.serverMode === 'github' ? 'selected' : ''}>Private GitHub Data Vault (For GitHub Users)</option>
-                  <option value="webdav" ${cfg.serverMode === 'webdav' ? 'selected' : ''}>Nextcloud / ownCloud / NAS (WebDAV)</option>
-                  <option value="custom_rest" ${cfg.serverMode === 'custom_rest' ? 'selected' : ''}>Custom REST / S3 Endpoint</option>
+
+                <select onchange="updateServerMode(this.value)" class="w-full bg-white border border-stone-200 rounded-xl px-3.5 py-2.5 text-xs font-extrabold outline-none">
+                  <option value="local_only" ${cfg.serverMode === 'local_only' ? 'selected' : ''}>Device Local Vault Only (Offline First)</option>
+                  <option value="shared_room" ${cfg.serverMode === 'shared_room' ? 'selected' : ''}>1-Click Encrypted Partner & Device Sync Room</option>
+                  <option value="github" ${cfg.serverMode === 'github' ? 'selected' : ''}>Private GitHub Data Vault (Hemanthadda / voyagera-vault)</option>
+                  <option value="webdav" ${cfg.serverMode === 'webdav' ? 'selected' : ''}>Private Nextcloud / WebDAV Server</option>
+                  <option value="custom_rest" ${cfg.serverMode === 'custom_rest' ? 'selected' : ''}>Custom REST Sync Endpoint</option>
                 </select>
 
                 ${cfg.serverMode === 'github' ? `
                   <div class="space-y-2.5 pt-1">
                     <p class="text-[11px] text-stone-600">Create a <strong>separate Private repository</strong> (e.g. <code>voyagera-vault</code>) so your app code stays untouched and private. Use a Fine-Grained Token scoped only to that data repo.</p>
                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <input id="gh-owner" type="text" value="${escapeHtml(cfg.ghOwner || '')}" placeholder="GitHub Username" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold" />
-                      <input id="gh-repo" type="text" value="${escapeHtml(cfg.ghRepo || '')}" placeholder="Private Data Repo Name" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold" />
-                      <input id="gh-token" type="password" value="${escapeHtml(cfg.ghToken || '')}" placeholder="Fine-Grained Token" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold" />
+                      <input id="gh-owner" type="text" value="${escapeHtml(cfg.ghOwner || '')}" placeholder="GitHub Username (e.g. Hemanthadda)" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold" />
+                      <input id="gh-repo" type="text" value="${escapeHtml(cfg.ghRepo || '')}" placeholder="Private Data Repo (e.g. voyagera-vault)" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold" />
+                      <input id="gh-token" type="password" value="${escapeHtml(cfg.ghToken || '')}" placeholder="Fine-Grained Token (github_pat_...)" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold" />
                     </div>
                   </div>
                 ` : ''}
@@ -3441,51 +3519,67 @@
                 ` : ''}
                 ${cfg.serverMode !== 'local_only' && cfg.serverMode !== 'shared_room' ? `
                   <div class="flex flex-wrap items-center gap-2 pt-1">
-                    <button type="button" onclick="saveServerSettings()" class="px-4 py-2 rounded-xl bg-stone-900 text-white text-xs font-extrabold">Save Connection</button>
-                    <button type="button" onclick="pushToConfiguredServer(false)" class="px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-extrabold"><i class="fa-solid fa-cloud-arrow-up mr-1"></i>Push (Save to Cloud)</button>
-                    <button type="button" onclick="pullFromConfiguredServer(false)" class="px-4 py-2 rounded-xl bg-sky-700 text-white text-xs font-extrabold"><i class="fa-solid fa-cloud-arrow-down mr-1"></i>Pull (Load on This Device)</button>
-                    <button type="button" onclick="copyDeviceSyncSetupKey()" class="px-3.5 py-2 rounded-xl bg-amber-100 text-amber-950 text-xs font-extrabold"><i class="fa-solid fa-key mr-1"></i>Copy Setup Key for Phone</button>
+                    <button type="button" onclick="saveServerSettings()" class="px-4 py-2 rounded-xl bg-stone-900 text-white text-xs font-extrabold">Save & Sync Now</button>
+                    <button type="button" onclick="copyFullVaultPairLink()" class="px-4 py-2 rounded-xl bg-gradient-to-r from-rose-500 to-orange-500 text-white text-xs font-extrabold shadow-2xs"><i class="fa-solid fa-link mr-1.5"></i>Copy Partner & Laptop Auto-Sync Link</button>
+                    <button type="button" onclick="copyDeviceSyncSetupKey()" class="px-3.5 py-2 rounded-xl bg-amber-100 text-amber-950 text-xs font-extrabold"><i class="fa-solid fa-key mr-1"></i>Copy Setup Key</button>
                   </div>
                 ` : ''}
-                <div class="pt-1 flex items-center gap-2">
-                  <button type="button" onclick="pasteDeviceSyncSetupKey()" class="text-[11px] font-extrabold text-orange-700 hover:underline"><i class="fa-solid fa-paste mr-1"></i>Pairing a second device? Paste Device Setup Key here</button>
+                <div class="pt-1">
+                  <button type="button" onclick="pasteDeviceSyncSetupKey()" class="text-[11px] font-extrabold text-orange-700 hover:underline">
+                    <i class="fa-solid fa-paste mr-1"></i>Pairing a second device? Paste Device Setup Key here
+                  </button>
                 </div>
               </div>
 
-              <!-- Google Drive / iCloud Folder & Encrypted Backup Row -->
-              <div class="space-y-2 pt-1">
-                <p class="text-[11px] text-stone-500"><strong>Prefer Google Drive / iCloud files?</strong> On PC, link your Google Drive/iCloud folder once for auto-saving. On Phone, use <strong>Share / Save</strong> to send to Drive/iCloud or <strong>Restore Backup File</strong> to load updates.</p>
-                <div class="flex flex-wrap gap-2">
-                  <button type="button" onclick="shareVaultNative()" class="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-rose-500 to-orange-500 text-white text-xs font-extrabold"><i class="fa-solid fa-share-nodes mr-1.5"></i>Share / Save to Google Drive or iCloud</button>
-                  <button type="button" onclick="linkLocalSyncFolder()" class="px-4 py-2.5 rounded-2xl bg-stone-900 text-white text-xs font-extrabold"><i class="fa-solid fa-folder-plus mr-1.5 text-amber-300"></i>${linkedDirHandle ? 'Google Drive / iCloud Folder Linked ✓' : 'Link Google Drive / iCloud Folder (PC)'}</button>
-                  <button type="button" onclick="downloadEncryptedBackup()" class="px-4 py-2.5 rounded-2xl bg-emerald-700 text-white text-xs font-extrabold"><i class="fa-solid fa-shield-halved mr-1.5"></i>AES-256 Encrypted Backup</button>
-                  <label class="cursor-pointer px-4 py-2.5 rounded-2xl bg-amber-100 text-amber-950 text-xs font-extrabold"><i class="fa-solid fa-upload mr-1.5"></i>Restore Backup File<input type="file" accept=".json" class="hidden" onchange="handleRestoreBackupFile(this)" /></label>
+              <!-- Google Drive / iCloud File Backup & Encrypted Export -->
+              <div class="bg-stone-50 rounded-2xl p-4 border border-stone-200 space-y-2.5">
+                <p class="text-xs font-extrabold text-stone-800">Google Drive / iCloud File Backup & Offline Retrieval</p>
+                <p class="text-[11px] text-stone-500">On laptop, link a folder inside Google Drive or iCloud Drive for automatic saving. On mobile, use Share / Save or Restore Backup File anytime.</p>
+                <div class="flex flex-wrap gap-2 pt-0.5">
+                  <button type="button" onclick="shareVaultNative()" class="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-rose-500 to-orange-500 text-white text-xs font-extrabold shadow-2xs">
+                    <i class="fa-solid fa-share-nodes mr-1.5"></i>Share / Save to Google Drive or iCloud
+                  </button>
+                  <button type="button" onclick="linkLocalSyncFolder()" class="px-4 py-2.5 rounded-2xl bg-stone-900 text-white text-xs font-extrabold">
+                    <i class="fa-solid fa-folder-plus mr-1.5 text-amber-300"></i>${linkedDirHandle ? 'Cloud Folder Linked ✓' : 'Link Google Drive / iCloud Folder (PC)'}
+                  </button>
+                  <button type="button" onclick="downloadEncryptedBackup()" class="px-4 py-2.5 rounded-2xl bg-emerald-700 text-white text-xs font-extrabold">
+                    <i class="fa-solid fa-shield-halved mr-1.5"></i>AES-256 Encrypted Backup
+                  </button>
+                  <label class="cursor-pointer px-4 py-2.5 rounded-2xl bg-amber-100 hover:bg-amber-200 text-amber-950 text-xs font-extrabold">
+                    <i class="fa-solid fa-upload mr-1.5"></i>Restore Backup File
+                    <input type="file" accept=".json" class="hidden" onchange="handleRestoreBackupFile(this)" />
+                  </label>
                 </div>
               </div>
             </div>
 
-            <!-- Step 2: App PIN Lock -->
-            <div class="bg-[#fffdf9] rounded-3xl p-5 border border-stone-200 space-y-3">
-              <span class="text-[10px] font-extrabold uppercase tracking-wider text-orange-600">Step 2 • Device Protection</span>
-              <h3 class="font-serif-blog text-lg font-bold text-stone-900">App PIN Lock Screen</h3>
-              <p class="text-xs text-stone-500">Protect your private app link on phone and desktop with a 4–8 digit PIN so only you and your spouse can unlock your trips and passports.</p>
-              <div class="flex flex-wrap gap-2">
-                <input id="new-pin-inp" type="password" inputmode="numeric" maxlength="8" placeholder="4–8 digit PIN" class="bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-xs font-bold" />
-                <button type="button" onclick="saveAppPin()" class="px-4 py-2 rounded-xl bg-stone-900 text-white text-xs font-extrabold">Set PIN</button>
-                ${cfg.pinHash ? `<button type="button" onclick="removeAppPin()" class="px-3 py-2 rounded-xl bg-rose-50 text-rose-700 text-xs font-extrabold">Remove PIN</button>` : ''}
+            <!-- Step 2: App PIN Lock & Clean-Slate Reset -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="bg-[#fffdf9] rounded-3xl p-5 border border-stone-200 space-y-3">
+                <div>
+                  <span class="text-[10px] font-extrabold uppercase tracking-wider text-orange-600">Step 2 • Device Privacy</span>
+                  <h3 class="font-serif-blog text-xl font-bold text-stone-900">App PIN Lock Screen</h3>
+                  <p class="text-xs text-stone-500 mt-0.5">Protect your app link on laptop and phone with a personal 4–8 digit PIN.</p>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <input id="new-pin-inp" type="password" inputmode="numeric" maxlength="8" placeholder="4–8 digit PIN" class="bg-white border border-stone-200 rounded-xl px-3.5 py-2 text-xs font-bold outline-none w-36" />
+                  <button type="button" onclick="saveAppPin()" class="px-4 py-2 rounded-xl bg-stone-900 text-white text-xs font-extrabold">${cfg.pinHash ? 'Update PIN' : 'Set PIN'}</button>
+                  ${cfg.pinHash ? `<button type="button" onclick="removeAppPin()" class="px-3 py-2 rounded-xl bg-rose-50 text-rose-700 text-xs font-extrabold">Remove PIN</button>` : ''}
+                </div>
               </div>
-            </div>
 
-            <!-- Reset / Clean Slate Before Hosting on GitHub -->
-            <div class="bg-rose-50/70 rounded-3xl p-5 border border-rose-200 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <span class="text-[10px] font-extrabold uppercase tracking-wider text-rose-700">Ready to Host on GitHub?</span>
-                <h3 class="font-serif-blog text-lg font-bold text-stone-900">Reset Sample Expedition to Clean Blank Slate</h3>
-                <p class="text-xs text-stone-600 mt-0.5">Clear the demo trips whenever you are ready to enter your own real journeys.</p>
+              <div class="bg-rose-50/70 rounded-3xl p-5 border border-rose-200/90 space-y-3 flex flex-col justify-between">
+                <div>
+                  <span class="text-[10px] font-extrabold uppercase tracking-wider text-rose-700">Ready to Host on GitHub?</span>
+                  <h3 class="font-serif-blog text-xl font-bold text-stone-900">Reset Sample Expedition to Clean Blank Slate</h3>
+                  <p class="text-xs text-stone-600 mt-0.5">Clear the demo trips whenever you are ready to enter your own real journeys.</p>
+                </div>
+                <div>
+                  <button type="button" onclick="resetVaultToBlank()" class="px-4 py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold shadow-2xs">
+                    <i class="fa-solid fa-rotate-left mr-1.5"></i>Reset to Blank Vault
+                  </button>
+                </div>
               </div>
-              <button type="button" onclick="resetVaultToBlank()" class="px-4 py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold shadow-2xs">
-                <i class="fa-solid fa-rotate-left mr-1.5"></i>Reset to Blank Vault
-              </button>
             </div>
           </div>
         `;
@@ -3521,7 +3615,8 @@
                     ${travelers.length > 1 ? `<button type="button" onclick="deleteTravelerPerson('${tr.id}')" class="text-stone-400 hover:text-rose-600 text-xs"><i class="fa-solid fa-trash"></i></button>` : ''}
                   </div>
                   <div class="flex flex-wrap gap-2 pt-1">
-                    <button type="button" onclick="copyTravelerPersonalLink('${tr.id}')" class="px-3 py-1.5 rounded-xl bg-stone-900 text-white text-[11px] font-extrabold"><i class="fa-solid fa-link mr-1 text-amber-300"></i>Copy ${escapeHtml(trip.name)} Link</button>
+                    ${cfg.serverMode !== 'local_only' ? `<button type="button" onclick="copyFullVaultPairLink('${tr.id}')" class="px-3 py-1.5 rounded-xl bg-emerald-700 text-white text-[11px] font-extrabold"><i class="fa-solid fa-rotate mr-1"></i>Co-Planner Live Sync Link</button>` : ''}
+                    <button type="button" onclick="copyTravelerPersonalLink('${tr.id}')" class="px-3 py-1.5 rounded-xl bg-stone-900 text-white text-[11px] font-extrabold"><i class="fa-solid fa-link mr-1 text-amber-300"></i>Guest View Link (${escapeHtml(trip.name)})</button>
                     <button type="button" onclick="emailTravelerPersonalLink('${tr.id}')" class="px-3 py-1.5 rounded-xl bg-orange-50 text-orange-800 text-[11px] font-extrabold"><i class="fa-solid fa-envelope mr-1"></i>Email Link</button>
                   </div>
                 </div>
@@ -3544,6 +3639,43 @@
     function toggleAutoPullOnOpen(enabled) {
       state.securityConfig.autoPullOnOpen = Boolean(enabled);
       saveState(true);
+    }
+
+    function copyFullVaultPairLink(forTravelerId = '') {
+      const cfg = state.securityConfig || {};
+      if (cfg.serverMode === 'local_only') {
+        showToast('Connect Private GitHub Vault or Shared Sync Room first.');
+        return;
+      }
+      const tr = forTravelerId ? (state.travelers || []).find(t => t.id === forTravelerId) : null;
+      const pairPayload = {
+        forTravelerId: tr ? tr.id : '',
+        forTravelerName: tr ? tr.name : '',
+        config: {
+          serverMode: cfg.serverMode,
+          autoPullOnOpen: true,
+          roomId: cfg.roomId || '',
+          roomSecret: cfg.roomSecret || '',
+          ghOwner: cfg.ghOwner || '',
+          ghRepo: cfg.ghRepo || '',
+          ghToken: cfg.ghToken || '',
+          webdavUrl: cfg.webdavUrl || '',
+          webdavUser: cfg.webdavUser || '',
+          webdavPass: cfg.webdavPass || '',
+          restUrl: cfg.restUrl || ''
+        }
+      };
+      const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(pairPayload))));
+      const base = window.location.href.split('#')[0];
+      const link = `${base}#voyagera_pair=${encoded}`;
+      const ta = document.createElement('textarea');
+      ta.value = link;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      const targetLabel = tr ? `for ${tr.name} ` : '';
+      showToast(`Copied 1-Tap Auto-Sync Link ${targetLabel}— send via WhatsApp/Email!`);
     }
 
     async function createEncryptedSharedRoom() {
@@ -3652,13 +3784,156 @@
       if (document.getElementById('wd-pass')) cfg.webdavPass = document.getElementById('wd-pass').value.trim();
       if (document.getElementById('rest-url')) cfg.restUrl = document.getElementById('rest-url').value.trim();
       saveState(true);
-      showToast('Saved server connection!');
+      syncNowBidirectional(false);
+    }
+
+    function mergeById(localArr = [], remoteArr = [], deletedSet = new Set()) {
+      const map = new Map();
+      (remoteArr || []).forEach(item => {
+        if (item && item.id && !deletedSet.has(item.id)) map.set(item.id, cloneObj(item));
+      });
+      (localArr || []).forEach(item => {
+        if (!item || !item.id || deletedSet.has(item.id)) return;
+        const existing = map.get(item.id);
+        if (!existing) {
+          map.set(item.id, cloneObj(item));
+        } else {
+          const locTs = Number(item.updatedAt) || 0;
+          const remTs = Number(existing.updatedAt) || 0;
+          if (locTs >= remTs) {
+            map.set(item.id, { ...existing, ...cloneObj(item) });
+          }
+        }
+      });
+      return Array.from(map.values());
+    }
+
+    function mergeVaultStates(localSt, remoteSt) {
+      const mergedDeleted = Array.from(new Set([...(localSt.deletedIds || []), ...(remoteSt.deletedIds || [])])).slice(-400);
+      const delSet = new Set(mergedDeleted);
+
+      const remoteTripsMap = new Map((remoteSt.trips || []).map(t => [t.id, t]));
+      const localTripsMap = new Map((localSt.trips || []).map(t => [t.id, t]));
+      const allTripIds = Array.from(new Set([...remoteTripsMap.keys(), ...localTripsMap.keys()])).filter(id => !delSet.has(id));
+
+      const mergedTrips = allTripIds.map(tripId => {
+        const lt = localTripsMap.get(tripId);
+        const rt = remoteTripsMap.get(tripId);
+        if (!lt) return cloneObj(rt);
+        if (!rt) return cloneObj(lt);
+
+        const remoteCitiesMap = new Map((rt.cities || []).map(c => [c.id, c]));
+        const localCitiesMap = new Map((lt.cities || []).map(c => [c.id, c]));
+        const allCityIds = Array.from(new Set([...remoteCitiesMap.keys(), ...localCitiesMap.keys()])).filter(id => !delSet.has(id));
+
+        const mergedCities = allCityIds.map(cid => {
+          const lc = localCitiesMap.get(cid);
+          const rc = remoteCitiesMap.get(cid);
+          if (!lc) return cloneObj(rc);
+          if (!rc) return cloneObj(lc);
+          return {
+            ...rc,
+            ...lc,
+            activities: mergeById(lc.activities, rc.activities, delSet)
+          };
+        });
+
+        return {
+          ...rt,
+          ...lt,
+          cities: mergedCities,
+          tickets: mergeById(lt.tickets, rt.tickets, delSet),
+          packing: mergeById(lt.packing, rt.packing, delSet),
+          guides: mergeById(lt.guides, rt.guides, delSet)
+        };
+      });
+
+      const mergedDocs = { ...(remoteSt.sectionDocs || {}) };
+      Object.entries(localSt.sectionDocs || {}).forEach(([k, list]) => {
+        const existing = mergedDocs[k] || [];
+        const seen = new Set(existing.map(d => d.name));
+        mergedDocs[k] = [...existing, ...(list || []).filter(d => !seen.has(d.name))];
+      });
+
+      return {
+        ...remoteSt,
+        ...localSt,
+        deletedIds: mergedDeleted,
+        travelers: mergeById(localSt.travelers, remoteSt.travelers, delSet),
+        emergencyContacts: mergeById(localSt.emergencyContacts, remoteSt.emergencyContacts, delSet),
+        sectionDocs: mergedDocs,
+        trips: mergedTrips.length ? mergedTrips : (localSt.trips || remoteSt.trips || []),
+        securityConfig: localSt.securityConfig,
+        activeUserId: localSt.activeUserId,
+        activeTripId: localSt.activeTripId,
+        selectedCityId: localSt.selectedCityId,
+        activeTab: localSt.activeTab,
+        guiStyle: localSt.guiStyle
+      };
+    }
+
+    async function fetchRemoteVaultOnly() {
+      const cfg = state.securityConfig || {};
+      if (cfg.serverMode === 'shared_room' && cfg.roomId && cfg.roomSecret) {
+        const getRes = await fetch(`https://jsonblob.com/api/jsonBlob/${cfg.roomId}`, {
+          headers: { 'Accept': 'application/json' },
+          cache: 'no-store'
+        });
+        if (!getRes.ok) return null;
+        const wrapper = await getRes.json();
+        if (wrapper && wrapper.voyageraEncrypted) {
+          return await decryptPayloadAes(wrapper, cfg.roomSecret);
+        }
+      } else if (cfg.serverMode === 'github' && cfg.ghOwner && cfg.ghRepo && cfg.ghToken) {
+        const apiUrl = `https://api.github.com/repos/${cfg.ghOwner}/${cfg.ghRepo}/contents/voyagera-vault.json`;
+        const getRes = await fetch(apiUrl, { headers: { Authorization: `Bearer ${cfg.ghToken}` }, cache: 'no-store' });
+        if (getRes.ok) {
+          const data = await getRes.json();
+          return JSON.parse(decodeURIComponent(escape(atob(data.content.replace(/\n/g, '')))));
+        }
+      } else if (cfg.serverMode === 'webdav' && cfg.webdavUrl) {
+        const auth = btoa(`${cfg.webdavUser || ''}:${cfg.webdavPass || ''}`);
+        const res = await fetch(cfg.webdavUrl, { headers: { Authorization: `Basic ${auth}` }, cache: 'no-store' });
+        if (res.ok) return await res.json();
+      } else if (cfg.serverMode === 'custom_rest' && cfg.restUrl) {
+        const res = await fetch(cfg.restUrl, { cache: 'no-store' });
+        if (res.ok) return await res.json();
+      }
+      return null;
+    }
+
+    let isSyncingNow = false;
+    async function syncNowBidirectional(silent = false) {
+      const cfg = state.securityConfig || {};
+      if (cfg.serverMode === 'local_only' || state.isGuestSharedView || isSyncingNow) return;
+      isSyncingNow = true;
+      const iconEl = document.getElementById('live-sync-icon');
+      if (iconEl) iconEl.classList.add('fa-spin');
+      try {
+        const remoteState = await fetchRemoteVaultOnly();
+        if (remoteState && Array.isArray(remoteState.trips)) {
+          state = mergeVaultStates(state, remoteState);
+          sortTripsChronologically();
+        }
+        await pushToConfiguredServer(true);
+        await writeDbValue(STATE_KEY, state);
+        render();
+        if (!silent) showToast('Merged & synced both devices!');
+      } catch (e) {
+        if (!silent) showToast('Sync paused — will retry automatically when online.');
+      } finally {
+        isSyncingNow = false;
+        const iconDone = document.getElementById('live-sync-icon');
+        if (iconDone) iconDone.classList.remove('fa-spin');
+      }
     }
 
     async function pushToConfiguredServer(silent = false) {
       const cfg = state.securityConfig || {};
       if (cfg.serverMode === 'local_only') return;
-      const bodyStr = JSON.stringify(state, null, 2);
+      const cleanCopy = cloneObj(state);
+      cleanCopy.securityConfig = { serverMode: 'local_only' };
+      const bodyStr = JSON.stringify(cleanCopy, null, 2);
       try {
         if (cfg.serverMode === 'shared_room' && cfg.roomId && cfg.roomSecret) {
           const encryptedStr = await encryptPayloadAes(bodyStr, cfg.roomSecret);
@@ -3716,51 +3991,7 @@
     }
 
     async function pullFromConfiguredServer(silent = false) {
-      const cfg = state.securityConfig || {};
-      if (cfg.serverMode === 'local_only') return;
-      try {
-        let remoteState = null;
-        if (cfg.serverMode === 'shared_room' && cfg.roomId && cfg.roomSecret) {
-          const getRes = await fetch(`https://jsonblob.com/api/jsonBlob/${cfg.roomId}`, {
-            headers: { 'Accept': 'application/json' }
-          });
-          if (!getRes.ok) throw new Error('Shared room pull failed');
-          const wrapper = await getRes.json();
-          if (wrapper && wrapper.voyageraEncrypted) {
-            remoteState = await decryptPayloadAes(wrapper, cfg.roomSecret);
-          }
-        } else if (cfg.serverMode === 'github' && cfg.ghOwner && cfg.ghRepo && cfg.ghToken) {
-          const apiUrl = `https://api.github.com/repos/${cfg.ghOwner}/${cfg.ghRepo}/contents/voyagera-vault.json`;
-          const getRes = await fetch(apiUrl, { headers: { Authorization: `Bearer ${cfg.ghToken}` } });
-          if (getRes.ok) {
-            const data = await getRes.json();
-            remoteState = JSON.parse(decodeURIComponent(escape(atob(data.content.replace(/\n/g, '')))));
-          }
-        } else if (cfg.serverMode === 'webdav' && cfg.webdavUrl) {
-          const auth = btoa(`${cfg.webdavUser || ''}:${cfg.webdavPass || ''}`);
-          const res = await fetch(cfg.webdavUrl, { headers: { Authorization: `Basic ${auth}` } });
-          if (res.ok) remoteState = await res.json();
-        } else if (cfg.serverMode === 'custom_rest' && cfg.restUrl) {
-          const res = await fetch(cfg.restUrl);
-          if (res.ok) remoteState = await res.json();
-        }
-
-        if (remoteState && Array.isArray(remoteState.trips)) {
-          const keptCfg = state.securityConfig;
-          const keptAuthor = state.activeUserId;
-          state = remoteState;
-          state.securityConfig = keptCfg;
-          if (keptAuthor) state.activeUserId = keptAuthor;
-          state.lastSyncedAt = new Date().toLocaleTimeString();
-          await writeDbValue(STATE_KEY, state);
-          render();
-          if (!silent) showToast('Pulled latest trips onto this device!');
-        } else if (!silent) {
-          showToast('No remote vault found yet — try Sync Now first.');
-        }
-      } catch (e) {
-        if (!silent) showToast('Could not pull from server.');
-      }
+      await syncNowBidirectional(silent);
     }
 
     async function linkLocalSyncFolder() {
@@ -4312,17 +4543,15 @@
     }
 
     window.addEventListener('online', () => {
-      if ((state.queuedMutations || 0) > 0) {
-        pushToConfiguredServer(false);
-      }
+      syncNowBidirectional(true);
       renderHeaderAndNav();
     });
 
     setInterval(() => {
-      if (document.visibilityState === 'visible' && navigator.onLine && !state.isGuestSharedView && state.securityConfig && state.securityConfig.serverMode === 'shared_room' && state.securityConfig.roomId) {
-        pullFromConfiguredServer(true);
+      if (document.visibilityState === 'visible' && navigator.onLine && !state.isGuestSharedView && state.securityConfig && state.securityConfig.serverMode !== 'local_only') {
+        syncNowBidirectional(true);
       }
-    }, 30000);
+    }, 15000);
 
     window.onload = async function () {
       registerOfflineAppShell();
@@ -4347,7 +4576,7 @@
       render();
 
       if (navigator.onLine && !state.isGuestSharedView && state.securityConfig && state.securityConfig.serverMode !== 'local_only' && state.securityConfig.autoPullOnOpen !== false) {
-        pullFromConfiguredServer(true);
+        syncNowBidirectional(true);
       }
     };
   </script>
