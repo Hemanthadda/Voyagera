@@ -931,13 +931,13 @@
       ],
       securityConfig: {
         pinHash: '',
-        serverMode: 'local_only',
+        serverMode: 'github',
         autoPullOnOpen: true,
         roomId: '',
         roomSecret: '',
-        ghOwner: '',
-        ghRepo: '',
-        ghToken: '',
+        ghOwner: 'Hemanthadda',
+        ghRepo: 'Voyagera',
+        ghToken: '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',
         webdavUrl: '',
         webdavUser: '',
         webdavPass: '',
@@ -1258,6 +1258,8 @@
     let showInlineEmergencyForm = false;
     let linkedDirHandle = null;
     let dialogConfirmCallback = null;
+    let hasPendingCloudPush = false;
+    let cloudPushDebounceTimer = null;
 
     let calViewMode = 'month';
     let calYear = 2026;
@@ -1376,14 +1378,40 @@
         }
       }
       if (!skipCloudPush && !state.isGuestSharedView && state.securityConfig && state.securityConfig.serverMode !== 'local_only') {
+        hasPendingCloudPush = true;
         if (navigator.onLine) {
-          syncNowBidirectional(true);
+          clearTimeout(cloudPushDebounceTimer);
+          cloudPushDebounceTimer = setTimeout(() => {
+            syncNowBidirectional(true);
+          }, 2500);
         } else {
           state.queuedMutations = (state.queuedMutations || 0) + 1;
           await writeDbValue(STATE_KEY, state);
           updateQueuedBadge();
         }
       }
+    }
+
+    function isUserActivelyEditing() {
+      const active = document.activeElement;
+      if (active && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName)) return true;
+      if (showInlineGuideForm || showInlineEmergencyForm) return true;
+      const modalIds = ['add-modal', 'edit-item-modal', 'dialog-modal', 'new-trip-modal', 'add-video-modal', 'search-modal'];
+      return modalIds.some(id => {
+        const el = document.getElementById(id);
+        return el && !el.classList.contains('hidden');
+      });
+    }
+
+    function getVaultDataSignature(st) {
+      if (!st) return '';
+      return JSON.stringify({
+        trips: st.trips || [],
+        travelers: st.travelers || [],
+        emergencyContacts: st.emergencyContacts || [],
+        sectionDocs: st.sectionDocs || {},
+        deletedIds: st.deletedIds || []
+      });
     }
 
     function markDeletedId(id) {
@@ -3886,7 +3914,13 @@
         }
       } else if (cfg.serverMode === 'github' && cfg.ghOwner && cfg.ghRepo && cfg.ghToken) {
         const apiUrl = `https://api.github.com/repos/${cfg.ghOwner}/${cfg.ghRepo}/contents/voyagera-vault.json`;
-        const getRes = await fetch(apiUrl, { headers: { Authorization: `Bearer ${cfg.ghToken}` }, cache: 'no-store' });
+        const getRes = await fetch(apiUrl, {
+          headers: {
+            Authorization: `Bearer ${cfg.ghToken}`,
+            Accept: 'application/vnd.github+json'
+          },
+          cache: 'no-store'
+        });
         if (getRes.ok) {
           const data = await getRes.json();
           return JSON.parse(decodeURIComponent(escape(atob(data.content.replace(/\n/g, '')))));
@@ -3910,15 +3944,33 @@
       const iconEl = document.getElementById('live-sync-icon');
       if (iconEl) iconEl.classList.add('fa-spin');
       try {
+        const beforeLocalSig = getVaultDataSignature(state);
         const remoteState = await fetchRemoteVaultOnly();
+        const remoteSig = remoteState ? getVaultDataSignature(remoteState) : '';
+        let localChangedFromRemote = false;
+
         if (remoteState && Array.isArray(remoteState.trips)) {
           state = mergeVaultStates(state, remoteState);
           sortTripsChronologically();
+          localChangedFromRemote = getVaultDataSignature(state) !== beforeLocalSig;
         }
-        await pushToConfiguredServer(true);
+
+        const mergedSig = getVaultDataSignature(state);
+        const needsCloudWrite = !silent || hasPendingCloudPush || !remoteState || mergedSig !== remoteSig;
+        if (needsCloudWrite) {
+          await pushToConfiguredServer(true);
+          hasPendingCloudPush = false;
+        }
+
         await writeDbValue(STATE_KEY, state);
-        render();
-        if (!silent) showToast('Merged & synced both devices!');
+        updateQueuedBadge();
+
+        if (!silent) {
+          render();
+          showToast('Merged & synced both devices!');
+        } else if (localChangedFromRemote && !isUserActivelyEditing()) {
+          render();
+        }
       } catch (e) {
         if (!silent) showToast('Sync paused — will retry automatically when online.');
       } finally {
@@ -3946,14 +3998,24 @@
         } else if (cfg.serverMode === 'github' && cfg.ghOwner && cfg.ghRepo && cfg.ghToken) {
           const apiUrl = `https://api.github.com/repos/${cfg.ghOwner}/${cfg.ghRepo}/contents/voyagera-vault.json`;
           let sha = '';
-          const getRes = await fetch(apiUrl, { headers: { Authorization: `Bearer ${cfg.ghToken}` } });
+          const getRes = await fetch(apiUrl, {
+            headers: {
+              Authorization: `Bearer ${cfg.ghToken}`,
+              Accept: 'application/vnd.github+json'
+            },
+            cache: 'no-store'
+          });
           if (getRes.ok) {
             const existing = await getRes.json();
             sha = existing.sha || '';
           }
           const putRes = await fetch(apiUrl, {
             method: 'PUT',
-            headers: { Authorization: `Bearer ${cfg.ghToken}`, 'Content-Type': 'application/json' },
+            headers: {
+              Authorization: `Bearer ${cfg.ghToken}`,
+              Accept: 'application/vnd.github+json',
+              'Content-Type': 'application/json'
+            },
             body: JSON.stringify({
               message: 'Voyagera sync update',
               content: btoa(unescape(encodeURIComponent(bodyStr))),
@@ -4544,23 +4606,27 @@
 
     window.addEventListener('online', () => {
       syncNowBidirectional(true);
-      renderHeaderAndNav();
+      if (!isUserActivelyEditing()) renderHeaderAndNav();
     });
 
     setInterval(() => {
-      if (document.visibilityState === 'visible' && navigator.onLine && !state.isGuestSharedView && state.securityConfig && state.securityConfig.serverMode !== 'local_only') {
+      if (document.visibilityState === 'visible' && navigator.onLine && !state.isGuestSharedView && state.securityConfig && state.securityConfig.serverMode !== 'local_only' && !isUserActivelyEditing()) {
         syncNowBidirectional(true);
       }
-    }, 15000);
+    }, 45000);
 
     window.onload = async function () {
       registerOfflineAppShell();
       const saved = await readDbValue(STATE_KEY);
       if (saved && Array.isArray(saved.trips) && saved.trips.length > 0) {
+        const savedSec = saved.securityConfig || {};
+        const usePreconfiguredGh = (!savedSec.ghToken && (!savedSec.serverMode || savedSec.serverMode === 'local_only'));
         state = {
           ...cloneObj(DEFAULT_STATE),
           ...saved,
-          securityConfig: { ...DEFAULT_STATE.securityConfig, ...(saved.securityConfig || {}) }
+          securityConfig: usePreconfiguredGh
+            ? cloneObj(DEFAULT_STATE.securityConfig)
+            : { ...DEFAULT_STATE.securityConfig, ...savedSec }
         };
       } else {
         state = cloneObj(DEFAULT_STATE);
