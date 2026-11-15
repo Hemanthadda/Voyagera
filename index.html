@@ -3644,9 +3644,15 @@
               </div>
 
               ${lastSyncDiagnostic ? `
-                <div class="px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center justify-between gap-2 ${lastSyncDiagnostic.ok ? 'bg-emerald-50 text-emerald-900 border border-emerald-200' : 'bg-rose-50 text-rose-900 border border-rose-200'}">
-                  <span><i class="fa-solid ${lastSyncDiagnostic.ok ? 'fa-circle-check text-emerald-600' : 'fa-triangle-exclamation text-rose-600'} mr-1.5"></i>${escapeHtml(lastSyncDiagnostic.message)}</span>
-                  <button type="button" onclick="lastSyncDiagnostic=null; render();" class="opacity-60 hover:opacity-100"><i class="fa-solid fa-xmark"></i></button>
+                <div class="px-4 py-3 rounded-2xl text-xs font-bold flex flex-wrap items-center justify-between gap-2 ${lastSyncDiagnostic.ok ? 'bg-emerald-50 text-emerald-900 border border-emerald-200' : 'bg-rose-50 text-rose-900 border border-rose-200'}">
+                  <div class="flex-1 min-w-0">
+                    <i class="fa-solid ${lastSyncDiagnostic.ok ? 'fa-circle-check text-emerald-600' : 'fa-triangle-exclamation text-rose-600'} mr-1.5"></i>
+                    <span>${escapeHtml(lastSyncDiagnostic.message)}</span>
+                  </div>
+                  <div class="flex items-center gap-2 shrink-0">
+                    ${lastSyncDiagnostic.canCreateRepo ? `<button type="button" onclick="createPrivateGitHubRepo()" class="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-[11px] font-extrabold shadow-2xs">Auto-Create Private Repo</button>` : ''}
+                    <button type="button" onclick="lastSyncDiagnostic=null; render();" class="opacity-60 hover:opacity-100 px-1"><i class="fa-solid fa-xmark"></i></button>
+                  </div>
                 </div>
               ` : ''}
 
@@ -3697,16 +3703,19 @@
                 ${cfg.serverMode === 'github' ? `
                   <div class="space-y-2">
                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <input id="gh-owner" type="text" autocomplete="off" value="${escapeHtml(cfg.ghOwner || 'Hemanthadda')}" placeholder="GitHub Username" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold outline-none" />
-                      <input id="gh-repo" type="text" autocomplete="off" value="${escapeHtml(cfg.ghRepo || 'voyagera-vault')}" placeholder="Private Data Repo Name" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold outline-none" />
+                      <input id="gh-owner" type="text" name="vg_gh_owner" autocomplete="off" value="${escapeHtml(cfg.ghOwner || 'Hemanthadda')}" placeholder="GitHub Username" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold outline-none" />
+                      <input id="gh-repo" type="text" name="vg_gh_repo" autocomplete="off" value="${escapeHtml(cfg.ghRepo || 'voyagera-vault')}" placeholder="Private Data Repo Name" class="bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs font-semibold outline-none" />
                       <div class="relative flex items-center">
-                        <input id="gh-token" type="${showGhTokenPlain ? 'text' : 'password'}" autocomplete="new-password" spellcheck="false" data-lpignore="true" data-1p-ignore="true" value="${escapeHtml(cfg.ghToken || '')}" placeholder="Paste ghp_... or github_pat_..." class="w-full bg-white border border-stone-200 rounded-xl pl-3 pr-9 py-2 text-xs font-mono font-semibold outline-none" />
+                        <input id="gh-token" type="text" name="vg_api_token_entry" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" oninput="handleGhTokenLiveInput(this.value)" value="${escapeHtml(cfg.ghToken || '')}" style="${showGhTokenPlain ? '' : '-webkit-text-security: disc;'}" placeholder="Paste ghp_... or github_pat_..." class="w-full bg-white border border-stone-200 rounded-xl pl-3 pr-9 py-2 text-xs font-mono font-semibold outline-none" />
                         <button type="button" onclick="toggleGhTokenVisibility()" title="Show / Hide Token" class="absolute right-2.5 text-stone-400 hover:text-stone-700 text-xs">
                           <i class="fa-solid ${showGhTokenPlain ? 'fa-eye-slash' : 'fa-eye'}"></i>
                         </button>
                       </div>
                     </div>
-                    <p class="text-[11px] text-stone-500"><strong>Fastest GitHub Token:</strong> On GitHub go to <em>Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token (classic)</em>, tick <strong>repo</strong>, copy the <code>ghp_...</code> token, and click <strong>Test Token</strong>.</p>
+                    <div class="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                      <span id="gh-token-fingerprint" class="font-mono font-bold ${cfg.ghToken ? 'text-emerald-800' : 'text-amber-700'}">${getTokenDebugFingerprint(cfg.ghToken)}</span>
+                      <span class="text-stone-500">Use <strong>Classic Token (<code>ghp_...</code>)</strong> with <strong><code>repo</code></strong> checked</span>
+                    </div>
                   </div>
                 ` : ''}
                 ${cfg.serverMode === 'webdav' ? `
@@ -4503,7 +4512,30 @@
     }
 
     function sanitizeGitHubToken(raw) {
-      return String(raw || '').replace(/^(Bearer|token)\s+/i, '').replace(/['"\s]/g, '');
+      return String(raw || '')
+        .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, '')
+        .replace(/^(Bearer|token)\s+/i, '')
+        .replace(/['"\s]/g, '');
+    }
+
+    function getTokenDebugFingerprint(raw) {
+      const clean = sanitizeGitHubToken(raw);
+      if (!clean) return 'No token loaded yet — paste your new GitHub token in box 3.';
+      const kind = clean.startsWith('ghp_') ? 'Classic PAT' : (clean.startsWith('github_pat_') ? 'Fine-Grained PAT' : 'Custom Token');
+      const masked = clean.length > 10 ? `${clean.slice(0, 6)}••••${clean.slice(-4)}` : '••••';
+      return `Loaded: ${kind} (${masked} • ${clean.length} chars)`;
+    }
+
+    function handleGhTokenLiveInput(val) {
+      const clean = sanitizeGitHubToken(val);
+      if (state.securityConfig) {
+        state.securityConfig.ghToken = clean;
+      }
+      const fp = document.getElementById('gh-token-fingerprint');
+      if (fp) {
+        fp.textContent = getTokenDebugFingerprint(clean);
+        fp.className = `font-mono font-bold ${clean ? 'text-emerald-800' : 'text-amber-700'}`;
+      }
     }
 
     function toggleGhTokenVisibility() {
@@ -4538,6 +4570,39 @@
       await syncNowBidirectional(false, true);
     }
 
+    async function createPrivateGitHubRepo() {
+      const cfg = state.securityConfig;
+      const cleanToken = sanitizeGitHubToken(cfg.ghToken);
+      if (!cleanToken || !cfg.ghRepo) return;
+      try {
+        showToast(`Creating private repo ${cfg.ghRepo}...`);
+        const res = await fetch('https://api.github.com/user/repos', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${cleanToken}`,
+            Accept: 'application/vnd.github+json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name: cfg.ghRepo,
+            private: true,
+            auto_init: true,
+            description: 'Private encrypted travel vault for Voyagera'
+          })
+        });
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(errBody.message || `Could not create repo (${res.status})`);
+        }
+        lastSyncDiagnostic = { ok: true, message: `Created private repo "${cfg.ghOwner}/${cfg.ghRepo}"! Pushing vault...` };
+        render();
+        await syncNowBidirectional(false, true);
+      } catch (err) {
+        lastSyncDiagnostic = { ok: false, message: 'Auto-create failed: ' + err.message };
+        render();
+      }
+    }
+
     async function testGitHubConnection() {
       const cfg = state.securityConfig;
       if (document.getElementById('gh-owner')) cfg.ghOwner = document.getElementById('gh-owner').value.trim();
@@ -4550,33 +4615,42 @@
         return;
       }
       const cleanToken = sanitizeGitHubToken(cfg.ghToken);
-      const authHeader = cleanToken.startsWith('ghp_') ? `token ${cleanToken}` : `Bearer ${cleanToken}`;
+      const fp = cleanToken.length > 10 ? `${cleanToken.slice(0, 6)}...${cleanToken.slice(-4)} (${cleanToken.length} chars)` : `${cleanToken.length} chars`;
       try {
         showToast('Testing GitHub token & repo...');
         const userRes = await fetch('https://api.github.com/user', {
-          headers: { Authorization: authHeader, Accept: 'application/vnd.github+json' },
+          headers: { Authorization: `Bearer ${cleanToken}`, Accept: 'application/vnd.github+json' },
           cache: 'no-store'
         });
         if (userRes.status === 401) {
-          throw new Error('Token rejected by GitHub (401 Bad credentials). Generate a fresh Classic Token (ghp_...) with "repo" checked.');
+          const ghErr = await userRes.json().catch(() => ({}));
+          throw new Error(`GitHub rejected token ${fp}: ${ghErr.message || 'Bad credentials'}. Make sure you copied a newly generated token (revoked/old tokens cannot be reused).`);
         }
         if (!userRes.ok) {
           throw new Error('GitHub auth check failed (' + userRes.status + ').');
         }
         const userData = await userRes.json();
+        const scopes = userRes.headers.get('x-oauth-scopes') || '';
         const repoRes = await fetch(`https://api.github.com/repos/${encodeURIComponent(cfg.ghOwner)}/${encodeURIComponent(cfg.ghRepo)}`, {
-          headers: { Authorization: authHeader, Accept: 'application/vnd.github+json' },
+          headers: { Authorization: `Bearer ${cleanToken}`, Accept: 'application/vnd.github+json' },
           cache: 'no-store'
         });
         if (repoRes.status === 404) {
-          throw new Error(`Signed in as @${userData.login}, but repo "${cfg.ghOwner}/${cfg.ghRepo}" was not found. Create that private repo on GitHub first.`);
+          await saveState(true);
+          lastSyncDiagnostic = {
+            ok: false,
+            canCreateRepo: true,
+            message: `Signed in as @${userData.login}, but private repo "${cfg.ghOwner}/${cfg.ghRepo}" does not exist yet.`
+          };
+          render();
+          return;
         }
         if (!repoRes.ok) {
           throw new Error('Repo access error (' + repoRes.status + ').');
         }
         const repoData = await repoRes.json();
         if (repoData.permissions && repoData.permissions.push === false) {
-          throw new Error('Token has read-only access. Enable "Contents: Read and write" (or "repo" scope).');
+          throw new Error(`Token for @${userData.login} is read-only (scopes: ${scopes || 'none'}). Enable "repo" scope.`);
         }
         await saveState(true);
         lastSyncDiagnostic = { ok: true, message: `Verified @${userData.login} → ${cfg.ghOwner}/${cfg.ghRepo} (Read & Write OK)!` };
@@ -4698,10 +4772,9 @@
 
       if (cfg.serverMode === 'github' && cfg.ghOwner && cfg.ghRepo && cfg.ghToken) {
         const cleanToken = sanitizeGitHubToken(cfg.ghToken);
-        const authHeader = cleanToken.startsWith('ghp_') ? `token ${cleanToken}` : `Bearer ${cleanToken}`;
         const url = `https://api.github.com/repos/${encodeURIComponent(cfg.ghOwner)}/${encodeURIComponent(cfg.ghRepo)}/contents/voyagera-vault.json`;
         const res = await fetch(url, {
-          headers: { Authorization: authHeader, Accept: 'application/vnd.github+json' },
+          headers: { Authorization: `Bearer ${cleanToken}`, Accept: 'application/vnd.github+json' },
           cache: 'no-store'
         });
         if (res.status === 404) return null;
@@ -4750,22 +4823,21 @@
 
       if (cfg.serverMode === 'github' && cfg.ghOwner && cfg.ghRepo && cfg.ghToken) {
         const cleanToken = sanitizeGitHubToken(cfg.ghToken);
-        const authHeader = cleanToken.startsWith('ghp_') ? `token ${cleanToken}` : `Bearer ${cleanToken}`;
         const url = `https://api.github.com/repos/${encodeURIComponent(cfg.ghOwner)}/${encodeURIComponent(cfg.ghRepo)}/contents/voyagera-vault.json`;
         for (let attempt = 0; attempt < 2; attempt++) {
           let sha = null;
           const getRes = await fetch(url, {
-            headers: { Authorization: authHeader, Accept: 'application/vnd.github+json' },
+            headers: { Authorization: `Bearer ${cleanToken}`, Accept: 'application/vnd.github+json' },
             cache: 'no-store'
           });
           if (getRes.status === 401) throw new Error('GitHub 401: Invalid or revoked token. Generate a fresh Classic Token (ghp_...) with "repo" checked.');
           if (getRes.status === 404) {
             const repoCheck = await fetch(`https://api.github.com/repos/${encodeURIComponent(cfg.ghOwner)}/${encodeURIComponent(cfg.ghRepo)}`, {
-              headers: { Authorization: authHeader, Accept: 'application/vnd.github+json' },
+              headers: { Authorization: `Bearer ${cleanToken}`, Accept: 'application/vnd.github+json' },
               cache: 'no-store'
             });
             if (repoCheck.status === 404) {
-              throw new Error(`Repo "${cfg.ghOwner}/${cfg.ghRepo}" not found on GitHub. Create it as a Private repository first!`);
+              throw new Error(`Repo "${cfg.ghOwner}/${cfg.ghRepo}" not found on GitHub. Click "Test Token" then "Auto-Create Private Repo"!`);
             }
           }
           if (getRes.ok) {
@@ -4775,7 +4847,7 @@
           const putRes = await fetch(url, {
             method: 'PUT',
             headers: {
-              Authorization: authHeader,
+              Authorization: `Bearer ${cleanToken}`,
               Accept: 'application/vnd.github+json',
               'Content-Type': 'application/json'
             },
