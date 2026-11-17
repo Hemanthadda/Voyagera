@@ -1123,6 +1123,7 @@
         roomId: '',
         roomSecret: ''
       },
+      vaultEpoch: 0,
       deletedIds: [],
       trips: [
         {
@@ -1753,7 +1754,26 @@
 
     function mergeVaultStates(localState, remoteState) {
       if (!remoteState || !Array.isArray(remoteState.trips)) return cloneObj(localState);
+      const localEpoch = Number(localState.vaultEpoch) || 0;
+      const remoteEpoch = Number(remoteState.vaultEpoch) || 0;
+      if (remoteEpoch > localEpoch) {
+        const adopted = cloneObj(localState);
+        adopted.vaultEpoch = remoteEpoch;
+        adopted.trips = cloneObj(remoteState.trips || []);
+        adopted.travelers = cloneObj(remoteState.travelers || localState.travelers || []);
+        adopted.emergencyContacts = cloneObj(remoteState.emergencyContacts || []);
+        adopted.deletedIds = cloneObj(remoteState.deletedIds || []);
+        if (adopted.trips[0]) {
+          adopted.activeTripId = adopted.trips[0].id;
+          adopted.selectedCityId = (adopted.trips[0].cities && adopted.trips[0].cities[0]) ? adopted.trips[0].cities[0].id : '';
+        }
+        return adopted;
+      }
+      if (localEpoch > remoteEpoch) {
+        return cloneObj(localState);
+      }
       const merged = cloneObj(localState);
+      merged.vaultEpoch = Math.max(localEpoch, remoteEpoch);
       const deletedSet = new Set([...(localState.deletedIds || []), ...(remoteState.deletedIds || [])]);
       merged.deletedIds = Array.from(deletedSet).slice(-500);
       merged.travelers = mergeById(localState.travelers, remoteState.travelers, deletedSet);
@@ -1850,6 +1870,7 @@
         sortTripsChronologically();
 
         const snapshot = {
+          vaultEpoch: Number(state.vaultEpoch) || 0,
           trips: state.trips,
           travelers: state.travelers,
           emergencyContacts: state.emergencyContacts,
@@ -3238,14 +3259,16 @@
     function resetToCleanBlankVault() {
       openCustomDialog({
         title: 'Reset to Clean Blank Vault?',
-        desc: 'This replaces the demo Mexico/Guatemala/Belize expedition with a clean blank trip (keeping your sync & PIN settings).',
+        desc: 'This permanently clears the demo expedition on this device and overwrites your connected Google Sheet / GitHub vault so old dummy trips do not return.',
         showInput: false,
-        confirmLabel: 'Reset Now',
+        confirmLabel: 'Reset Everywhere Now',
         onConfirm: async () => {
+          clearTimeout(pushDebounceTimer);
           const keptCfg = cloneObj(state.securityConfig);
           const keptTravelers = cloneObj(state.travelers);
-          const blankTripId = 'trip_' + Date.now();
-          const blankCityId = 'city_' + (Date.now() + 1);
+          const newEpoch = Date.now();
+          const blankTripId = 'trip_' + newEpoch;
+          const blankCityId = 'city_' + (newEpoch + 1);
           state = {
             activeTripId: blankTripId,
             selectedCityId: blankCityId,
@@ -3257,6 +3280,7 @@
             travelers: keptTravelers,
             emergencyContacts: [],
             securityConfig: keptCfg,
+            vaultEpoch: newEpoch,
             deletedIds: [],
             trips: [
               {
@@ -3276,9 +3300,53 @@
               }
             ]
           };
-          await saveState(false);
+          await writeDbValue(STATE_KEY, state);
+          lastSyncedDataSignature = getVaultDataSignature(state);
+          hasPendingCloudPush = false;
           render();
-          showToast('Reset to clean blank vault!');
+
+          if (localFolderHandle) {
+            try {
+              const outHandle = await localFolderHandle.getFileHandle('voyagera-vault.json', { create: true });
+              const writable = await outHandle.createWritable();
+              await writable.write(JSON.stringify(state, null, 2));
+              await writable.close();
+            } catch (e) {}
+          }
+
+          if (hasRemoteSyncConfigured() && navigator.onLine) {
+            isSyncingNow = true;
+            updateSyncStatusUi();
+            try {
+              const snapshot = {
+                vaultEpoch: newEpoch,
+                trips: state.trips,
+                travelers: state.travelers,
+                emergencyContacts: state.emergencyContacts,
+                deletedIds: [],
+                updatedAt: new Date().toISOString()
+              };
+              const cfg = state.securityConfig || {};
+              if (cfg.serverMode === 'gsheets') await pushToGoogleSheet(cfg, snapshot);
+              else if (cfg.serverMode === 'github') await pushToGitHubVault(cfg, snapshot);
+              else if (cfg.serverMode === 'firebase') await pushToFirebaseDb(cfg, snapshot);
+              else if (cfg.serverMode === 'room') await pushToSyncRoom(cfg, snapshot);
+              lastSyncOk = true;
+              lastSyncDiagnostic = `Cloud vault reset & synced at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+              render();
+              showToast('Local device & Google Sheet reset to a clean slate!');
+            } catch (err) {
+              lastSyncOk = false;
+              lastSyncDiagnostic = err && err.message ? err.message : 'Cloud reset failed';
+              render();
+              showToast('Local reset done, but cloud overwrite failed: ' + lastSyncDiagnostic);
+            } finally {
+              isSyncingNow = false;
+              updateSyncStatusUi();
+            }
+          } else {
+            showToast('Reset to clean blank vault!');
+          }
         }
       });
     }
